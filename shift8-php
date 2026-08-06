@@ -1,0 +1,202 @@
+#!/usr/bin/env bash
+set -Eeuo pipefail
+umask 077
+
+BASE_DIR=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)
+# shellcheck source=lib/common.sh
+source "$BASE_DIR/lib/common.sh"
+# shellcheck source=lib/networking.sh
+source "$BASE_DIR/lib/networking.sh"
+# shellcheck source=lib/detect.sh
+source "$BASE_DIR/lib/detect.sh"
+# shellcheck source=lib/repositories.sh
+source "$BASE_DIR/lib/repositories.sh"
+# shellcheck source=lib/sources.sh
+source "$BASE_DIR/lib/sources.sh"
+# shellcheck source=lib/build-rpm.sh
+source "$BASE_DIR/lib/build-rpm.sh"
+
+usage() {
+    cat <<'EOF'
+shift8-php - read-only PHP package discovery and authenticated source preparation
+
+Usage: shift8-php <discover|prepare|check> <installed-package> [options]
+       shift8-php <deploy|rollback> <installed-package>
+
+Options:
+  --target=X.Y.Z          Select an officially published release in the same branch
+  --artifact-dir=PATH     Private artifact store (default: /var/lib/shift8-php)
+  --source-only          Retrieve sources even when a repository candidate exists
+  --source-map=PATH       Reviewed, checksum-pinned packaging file map
+  --source-keyring=PATH   Trusted keyring for Debian source signatures
+  --build-profile=PATH    Explicitly reviewed isolated mock build profile (EL7 Remi)
+  --manifest=PATH         Prepared manifest for read-only compatibility check
+  --dry-run              Discover and plan; do not persist or download sources
+  --offline              Use previously authenticated, unexpired cached inputs only
+  --ipv4                 Force IPv4
+  --verbose              Print phase diagnostics
+  --yes                  Reserved; never authorizes deployment in this release
+  --help                 Show this help
+
+Build, deploy and rollback are disabled by default.
+Build requires an explicitly reviewed --build-profile; deploy/rollback stay disabled.
+No host toolchains, PHP packages, repositories or services are changed.
+EOF
+}
+
+COMMAND=${1:-}
+[[ $# -eq 0 ]] || shift
+PACKAGE='' TARGET='' SOURCE_MAP='' SOURCE_KEYRING='' BUILD_PROFILE='' MANIFEST=''
+ARTIFACT_DIR=/var/lib/shift8-php
+DRY_RUN=0 OFFLINE=0 IPV4=0 VERBOSE=0 SOURCE_ONLY=0
+WORK='' LOG_FILE='' OPERATION=initialization BUILD_PID=''
+trap cleanup EXIT
+trap 'failed "$?" "$LINENO"' ERR
+trap 'die 130 "Interrupted; source preparation may be incomplete. Re-run to revalidate inputs."' INT
+trap 'die 143 "Terminated; source preparation may be incomplete. Re-run to revalidate inputs."' TERM
+
+case "$COMMAND" in
+    -h | --help | '')
+        usage
+        exit 0
+        ;;
+    discover | prepare | check | deploy | rollback) ;;
+    *) die 2 "Unknown command: $COMMAND" ;;
+esac
+for argument in "$@"; do
+    case "$argument" in
+        --target=*)
+            TARGET=${argument#*=}
+            [[ -n $TARGET ]] || die 2 "Target must not be empty."
+            ;;
+        --artifact-dir=*) ARTIFACT_DIR=${argument#*=} ;;
+        --source-map=*)
+            SOURCE_MAP=${argument#*=}
+            [[ -n $SOURCE_MAP ]] || die 2 "Source map path must not be empty."
+            ;;
+        --source-keyring=*)
+            SOURCE_KEYRING=${argument#*=}
+            [[ -n $SOURCE_KEYRING ]] || die 2 "Source keyring path must not be empty."
+            ;;
+        --build-profile=*)
+            BUILD_PROFILE=${argument#*=}
+            [[ -n $BUILD_PROFILE ]] || die 2 "Build profile path must not be empty."
+            SOURCE_ONLY=1
+            ;;
+        --manifest=*)
+            MANIFEST=${argument#*=}
+            [[ -n $MANIFEST ]] || die 2 "Manifest path must not be empty."
+            ;;
+        --dry-run) DRY_RUN=1 ;;
+        --offline) OFFLINE=1 ;;
+        --ipv4) IPV4=1 ;;
+        --verbose) VERBOSE=1 ;;
+        --source-only) SOURCE_ONLY=1 ;;
+        --yes) ;;
+        --rollback) COMMAND=rollback ;;
+        --build-only | --force-rebuild | --allow-prerelease)
+            die 2 "$argument is not supported in milestones 1-3; only stable source preparation is available."
+            ;;
+        --help)
+            usage
+            exit 0
+            ;;
+        -*) die 2 "Unknown option: $argument" ;;
+        *)
+            [[ -z $PACKAGE ]] || die 2 "Supply exactly one installed package identifier."
+            PACKAGE=$argument
+            ;;
+    esac
+done
+[[ $PACKAGE =~ ^[a-zA-Z0-9][a-zA-Z0-9.+:_-]*$ ]] || die 2 "A valid, exact installed package identifier is required."
+if [[ $COMMAND == deploy || $COMMAND == rollback ]]; then
+    die 3 "$COMMAND is disabled: validated builds, runtime checks and recovery are not implemented."
+fi
+[[ -z $TARGET || $TARGET =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || die 2 "Target must be a stable X.Y.Z version."
+[[ -n $ARTIFACT_DIR ]] || die 2 "Artifact directory must not be empty."
+for dependency in mktemp tar; do
+    require "$dependency"
+done
+select_metadata_python
+if [[ $COMMAND == check ]]; then
+    [[ -n $MANIFEST ]] || die 2 "check requires --manifest pointing to a prepared build."
+elif [[ -n $MANIFEST ]]; then
+    die 2 "--manifest is only valid with check."
+fi
+if [[ -n $BUILD_PROFILE ]]; then
+    [[ $COMMAND == prepare ]] || die 2 "--build-profile is only valid with prepare."
+    [[ -f $BUILD_PROFILE ]] || die 2 "Build profile does not exist: $BUILD_PROFILE"
+    if ((!DRY_RUN)); then
+        require mock
+        require rpm
+        require setsid
+        ((!OFFLINE)) || die 3 "Offline isolated builds require authenticated buildroot caching, which is not implemented."
+    fi
+fi
+WORK=$(mktemp -d "${TMPDIR:-/tmp}/shift8-php.XXXXXXXX")
+LOG_FILE=$WORK/discovery.log
+if [[ $COMMAND == prepare ]] && ((!DRY_RUN)); then
+    require flock
+    ARTIFACT_DIR=$(meta store "$ARTIFACT_DIR")
+    exec 9>>"$ARTIFACT_DIR/.prepare.lock"
+    flock -n 9 || die 4 "Another preparation is using this artifact store."
+    LOG_FILE=$ARTIFACT_DIR/logs/preparation-$(date -u +%Y%m%dT%H%M%SZ)-$$.log
+    : >"$LOG_FILE"
+fi
+OPERATION=discovery
+discover
+if [[ $COMMAND == discover ]]; then
+    cat "$WORK/discovery.json"
+    exit 0
+fi
+if [[ $COMMAND == check ]]; then
+    meta compare "$WORK/discovery.json" "$MANIFEST"
+    exit 0
+fi
+if ((!OFFLINE)); then require curl; fi
+OPERATION='release-selection'
+select_release
+if [[ -n $BUILD_PROFILE ]]; then
+    build_meta validate "$BUILD_PROFILE" "$WORK/discovery.json" "$WORK/release.json"
+fi
+OPERATION='repository-discovery'
+query_repositories
+if ((DRY_RUN)); then
+    meta plan "$WORK/discovery.json" "$WORK/release.json" "$WORK/repositories.json"
+    exit 0
+fi
+BUILD_ID=$(meta build-id "$WORK/discovery.json" "$WORK/release.json")
+BUILD_DIR=$(mktemp -d "$ARTIFACT_DIR/builds/$BUILD_ID.XXXXXXXX")
+cp "$WORK/discovery.json" "$WORK/release.json" "$WORK/repositories.json" "$BUILD_DIR/"
+cp "$WORK/support.json" "$WORK/releases.json" "$WORK/support.json.receipt.json" \
+    "$WORK/releases.json.receipt.json" "$BUILD_DIR/"
+cp "$LOG_FILE" "$BUILD_DIR/preparation.log"
+LOG_FILE=$BUILD_DIR/preparation.log
+if ((!SOURCE_ONLY)) && [[ $(meta get "$WORK/repositories.json" preferred_route) == native-package-review ]]; then
+    meta manifest "$BUILD_DIR" native-update-review
+    meta verify-manifest "$BUILD_DIR/manifest.json"
+    log "Native repository candidate found; signature, advisory and transaction review are still required."
+    log "No sources downloaded. Use --source-only to explicitly investigate a rebuild instead."
+    printf '%s\n' "$BUILD_DIR/manifest.json"
+    exit 0
+fi
+OPERATION='source-acquisition'
+acquire_sources
+if [[ -n $BUILD_PROFILE ]]; then
+    OPERATION='isolated-build'
+    build_rpm
+fi
+OPERATION='manifest-validation'
+if [[ -n $BUILD_PROFILE ]]; then
+    meta manifest "$BUILD_DIR" isolated-rpm-build
+else
+    meta manifest "$BUILD_DIR" source-preparation
+fi
+meta verify-manifest "$BUILD_DIR/manifest.json"
+if [[ -n $BUILD_PROFILE ]]; then
+    log "Prepared statically inspected isolated build artifacts: $BUILD_DIR/manifest.json"
+else
+    log "Prepared source inputs only: $BUILD_DIR/manifest.json"
+fi
+log "Not build-ready or deployable; package/runtime compatibility remains unverified."
+printf '%s\n' "$BUILD_DIR/manifest.json"
