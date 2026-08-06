@@ -1,0 +1,16 @@
+php-cli	(none)	8.2.20	1.el7.remi	x86_64	php-8.2.20-1.el7.remi.src.rpm	Remi's RPM repository
+php-common	(none)	8.2.20	1.el7.remi	x86_64	php-8.2.20-1.el7.remi.src.rpm	Remi's RPM repository
+php-devel	(none)	8.2.20	1.el7.remi	x86_64	php-8.2.20-1.el7.remi.src.rpm	Remi's RPM repository
+php-fpm	(none)	8.2.20	1.el7.remi	x86_64	php-8.2.20-1.el7.remi.src.rpm	Remi's RPM repository
+php-gd	(none)	8.2.20	1.el7.remi	x86_64	php-8.2.20-1.el7.remi.src.rpm	Remi's RPM repository
+php-intl	(none)	8.2.20	1.el7.remi	x86_64	php-8.2.20-1.el7.remi.src.rpm	Remi's RPM repository
+php-mbstring	(none)	8.2.20	1.el7.remi	x86_64	php-8.2.20-1.el7.remi.src.rpm	Remi's RPM repository
+php-mysqlnd	(none)	8.2.20	1.el7.remi	x86_64	php-8.2.20-1.el7.remi.src.rpm	Remi's RPM repository
+php-opcache	(none)	8.2.20	1.el7.remi	x86_64	php-8.2.20-1.el7.remi.src.rpm	Remi's RPM repository
+php-pdo	(none)	8.2.20	1.el7.remi	x86_64	php-8.2.20-1.el7.remi.src.rpm	Remi's RPM repository
+php-pecl-igbinary	(none)	3.2.15	1.el7.remi.8.2	x86_64	php-pecl-igbinary-3.2.15-1.el7.remi.8.2.src.rpm	Remi's RPM repository
+php-pecl-msgpack	(none)	2.2.0	1.el7.remi.8.2	x86_64	php-pecl-msgpack-2.2.0-1.el7.remi.8.2.src.rpm	Remi's RPM repository
+php-pecl-redis5	(none)	5.3.7	2.el7.remi.8.2	x86_64	php-pecl-redis5-5.3.7-2.el7.remi.8.2.src.rpm	Remi's RPM repository
+php-pecl-zip	(none)	1.22.3	1.el7.remi.8.2	x86_64	php-pecl-zip-1.22.3-1.el7.remi.8.2.src.rpm	Remi's RPM repository
+php-soap	(none)	8.2.20	1.el7.remi	x86_64	php-8.2.20-1.el7.remi.src.rpm	Remi's RPM repository
+php-xml	(none)	8.2.20	1.el7.remi	x86_64	php-8.2.20-1.el7.remi.src.rpm	Remi's RPM repository
