@@ -1,0 +1,70 @@
+name: Checks
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  offline-tests:
+    strategy:
+      matrix:
+        os: [ubuntu-22.04, ubuntu-24.04]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install validation tools in the CI runner
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y bats shellcheck shfmt
+      - run: make lint bats
+      - name: Exercise the legacy metadata runtime with genuine Python 2.7
+        run: |
+          docker run --rm --network none --read-only --cap-drop=ALL \
+            --security-opt=no-new-privileges --tmpfs /tmp:rw,nosuid,nodev,exec \
+            -v "$PWD:/project:ro" -w /project \
+            python:2.7 bash -c 'python -B tests/legacy_runtime.py && bash tests/legacy_cli.sh'
+
+  native-discovery:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - image: almalinux:8
+            package: php-cli
+          - image: almalinux:9
+            package: php-cli
+          - image: debian:12
+            package: php8.2-cli
+          - image: ubuntu:24.04
+            package: php8.3-cli
+    runs-on: ubuntu-24.04
+    container: ${{ matrix.image }}
+    env:
+      PHP_PACKAGE: ${{ matrix.package }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install fixture runtime in this disposable container only
+        run: |
+          if command -v dnf >/dev/null; then
+            dnf -y install python3 php-cli
+          else
+            apt-get update
+            DEBIAN_FRONTEND=noninteractive apt-get install -y python3 "$PHP_PACKAGE"
+          fi
+      - name: Discover the native installation without modifying it
+        shell: bash
+        run: |
+          bash shift8-php discover "$PHP_PACKAGE" > "$RUNNER_TEMP/discovery.json"
+          python3 - "$RUNNER_TEMP/discovery.json" <<'PY'
+          import json, sys
+          with open(sys.argv[1]) as stream:
+              data = json.load(stream)
+          assert data["schema_version"] == 1
+          assert data["runtime"]["module_api"].isdigit()
+          assert data["runtime"]["zend_extension_api"].isdigit()
+          assert data["runtime"]["owner"] in data["family"]["names"]
+          assert data["distribution"]["support"] == "experimental"
+          PY
