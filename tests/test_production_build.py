@@ -318,8 +318,8 @@ else:
 
 
 class MockDriverTests(ProductionFixture):
-    def driver_setup(self, **variables):
-        directory, path, _ = self.prepare_build()
+    def driver_setup(self, data=None, target_version="8.2.35", branch="8.2", **variables):
+        directory, path, _ = self.prepare_build(data=data, target_version=target_version, branch=branch)
         work = self.directory / "work"
         work.mkdir()
         metadata.dump(dict(configured=[]), work / "repository-config.json")
@@ -362,6 +362,13 @@ class MockDriverTests(ProductionFixture):
         manifest = metadata.load(directory / "manifest.json")
         self.assertFalse(manifest["deployable"])
         self.assertEqual(len(manifest["build"]["replacements"]), 1)
+
+    def test_parallel_remi_driver_installs_matching_build_support_package(self):
+        data = self.snapshot(family_source="php83-php", runtime_version="8.3.8", branch="8.3")
+        directory, result = self.driver(data=data, target_version="8.3.36", branch="8.3")
+        self.assertEqual(result.returncode, 7)
+        calls = [json.loads(line) for line in (directory / "mock-calls").read_text().splitlines()]
+        self.assertTrue(any("--install" in call and "php83-build" in call for call in calls))
 
     def test_failed_vendor_patch_stops_before_compilation(self):
         directory, result = self.driver(FAIL_PREP="1")

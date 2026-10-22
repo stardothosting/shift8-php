@@ -46,7 +46,7 @@ build_phase() {
 }
 
 build_rpm() {
-    local config spec item cc cxx compiler_path jobs unique input_id final_id option
+    local config spec item cc cxx compiler_path jobs unique input_id final_id option source_name build_support_package=''
     local -a mock_options compiler_environment
     require mock
     require rpm
@@ -65,12 +65,19 @@ build_rpm() {
     cxx=$(meta get "$BUILD_DIR/build-inputs/profile.json" compiler.cxx)
     compiler_path=${cc%/*}
     jobs=$(meta get "$BUILD_DIR/build-inputs/profile.json" jobs)
+    source_name=$(meta get "$BUILD_DIR/discovery.json" family.source_name)
+    if [[ $source_name == *-php && $source_name != php ]]; then
+        build_support_package=${source_name%-php}-build
+    fi
     unique=shift8-${BUILD_DIR##*/}-$input_id
     printf '%s\n' "$unique" >"$BUILD_DIR/mock-root-id"
     mock_options=(-r "$config" "--uniqueext=$unique" "--resultdir=$BUILD_DIR/build-logs")
     compiler_environment=(/usr/bin/env "PATH=$compiler_path:/usr/bin:/bin" "CC=$cc" "CXX=$cxx")
     build_phase mock-version mock "${mock_options[@]}" --version
     build_phase init mock "${mock_options[@]}" --init
+    if [[ -n $build_support_package ]]; then
+        build_phase build-support-package mock "${mock_options[@]}" --install "$build_support_package"
+    fi
     build_phase toolchain-packages mock "${mock_options[@]}" --chroot -- rpm -qa \
         --qf '%{NAME}\t%{EPOCH}\t%{VERSION}\t%{RELEASE}\t%{ARCH}\n'
     build_phase cc mock "${mock_options[@]}" --chroot -- "$cc" -dumpversion
@@ -90,7 +97,7 @@ build_rpm() {
         --qf '%{NAME}\t%{VERSION}\n' "/builddir/build/SOURCES/$spec"
     build_phase buildrequires mock "${mock_options[@]}" --chroot -- rpmspec -q --buildrequires "/builddir/build/SOURCES/$spec"
     build_meta spec "$BUILD_DIR" >"$BUILD_DIR/build-requires.txt"
-    query_build_dependencies
+    log "Skipping host build-dependency repository sweep; mock --installdeps remains authoritative for isolated builds."
     build_phase dependency-srpm mock "${mock_options[@]}" --chroot -- "${compiler_environment[@]}" \
         rpmbuild -bs --define '_topdir /builddir/build' "/builddir/build/SOURCES/$spec"
     mkdir "$BUILD_DIR/dependency-srpm"
