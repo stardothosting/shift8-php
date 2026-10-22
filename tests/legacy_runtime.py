@@ -51,6 +51,20 @@ class LegacyRuntimeTests(unittest.TestCase):
         self.assertTrue(callable(build_metadata.profile))
         self.assertEqual(metadata.run([sys.executable, "-c", "print('legacy child')"]).stdout.strip(), "legacy child")
 
+    def test_source_index_routing_and_html_parser(self):
+        source = "php83-php-8.3.8-1.el7.remi.src.rpm"
+        data = dict(family=dict(source_reference=source, source_name="php83-php", packages=[]))
+        config = dict(configured=[dict(id="vendor-source", enabled=False)])
+        plan = metadata.source_repositories(data, config, dict(candidates=[]))
+        self.assertEqual(plan["source_repositories"], ["vendor-source"])
+        path = os.path.join(self.directory, "provider.html")
+        with open(path, "w") as stream:
+            stream.write('<a href="../' + source + '">source</a>')
+        self.assertEqual(
+            metadata.provider_source_locations(path, "https://rpms.remirepo.net/SRPMS/repoview/php83-php.html", source),
+            ["https://rpms.remirepo.net/SRPMS/" + source],
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

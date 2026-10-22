@@ -357,6 +357,10 @@ elif command == "curl":
         filename = "support.json"
     elif "releases/index.php" in url:
         filename = "releases.json"
+    elif "/tree/?h=v" in url and "git.remirepo.net/cgit/rpms/php/" in url:
+        filename = "packaging-tree.html"
+    elif "/plain/" in url and "git.remirepo.net/cgit/rpms/php/" in url:
+        filename = url.split("/plain/", 1)[1].split("?", 1)[0]
     elif url.endswith(".tar.xz"):
         filename = "php.tar.xz"
     elif url.endswith(".spec"):
@@ -365,6 +369,8 @@ elif command == "curl":
         filename = "source.rpm"
     elif url.endswith(".dsc"):
         filename = "source.dsc"
+    elif url.endswith(".html"):
+        filename = "provider.html"
     else:
         sys.exit(22)
     destination = pathlib.Path(args[args.index("--output") + 1])
@@ -376,9 +382,18 @@ elif command == "curl":
         shutil.copyfile(root / filename, destination)
 elif command in ("repoquery", "dnf"):
     if "--location" in args:
+        if os.environ.get("MOCK_SOURCE_QUERY_FAIL"):
+            print("Repository metadata lookup failed", file=sys.stderr)
+            sys.exit(42)
+        if os.environ.get("MOCK_SOURCE_EMPTY"):
+            sys.exit(0)
+        if os.environ.get("MOCK_SOURCE_NOISE"):
+            print("<html>Repository unavailable</html>")
+            print("https://example.test/foreign-8.2.20-1.el9.src.rpm")
         if os.environ.get("MOCK_SOURCE_FAIL_FIRST"):
-            print("https://unavailable.example.test/source.rpm")
-        print("https://example.test/php-8.2.20-1.el7.remi.src.rpm")
+            print("https://unavailable.example.test/php-8.2.20-1.el7.remi.src.rpm")
+        protocol = "http" if os.environ.get("MOCK_SOURCE_HTTP") else "https"
+        print(protocol + "://example.test/php-8.2.20-1.el7.remi.src.rpm")
     else:
         print("php-cli\t0\t8.2.20\t1.el7.remi\tx86_64\tphp-8.2.20-1.el7.remi.src.rpm")
 elif command == "apt-get":
@@ -413,6 +428,13 @@ class CommandTests(TemporaryTest):
         metadata.dump(versions, self.host / "releases.json")
         (self.host / "vendor.spec").write_text("Name: php\n# reviewed fixture, never executed\n", encoding="utf-8")
         (self.host / "source.rpm").write_text("mock-signed-srpm", encoding="utf-8")
+        (self.host / "php83.spec").write_text("Name: php83-php\n# provider packaging fixture\n", encoding="utf-8")
+        (self.host / "php.ini").write_text("memory_limit = 128M\n", encoding="utf-8")
+        (self.host / "packaging-tree.html").write_text(
+            '<a href="/cgit/rpms/php/php83.git/plain/php83.spec?h=v8.3.8">spec</a>'
+            '<a href="/cgit/rpms/php/php83.git/plain/php.ini?h=v8.3.8">ini</a>',
+            encoding="utf-8",
+        )
         self.mapping = self.host / "source-map.json"
         metadata.dump(dict(
             reviewed=True, installed_source="php-8.2.20-1.el7.remi.src.rpm",
@@ -633,6 +655,7 @@ class CommandTests(TemporaryTest):
         (build / "sources").mkdir()
         metadata.dump(data or discovery(), work / "discovery.json")
         metadata.dump(dict(configured=[dict(id="remi-source", enabled=False)]), work / "repository-config.json")
+        metadata.dump(dict(candidates=[]), work / "repositories.json")
         return dict(
             self.env, BASE_DIR=str(ROOT), WORK=str(work), BUILD_DIR=str(build),
             ARTIFACT_DIR=str(self.artifacts), LOG_FILE=str(self.directory / "source.log"),
@@ -657,6 +680,9 @@ class CommandTests(TemporaryTest):
         self.assertTrue((pathlib.Path(environment["BUILD_DIR"]) / "sources/php-8.2.20-1.el7.remi.src.rpm").is_file())
         source_queries = [call for call in self.calls() if call[0] == "repoquery"]
         self.assertIn("--archlist=src", source_queries[0])
+        self.assertIn("--show-duplicates", source_queries[0])
+        self.assertFalse(any("logdir=" in part for part in source_queries[0]))
+        self.assertTrue(any("logfile=" in part for part in source_queries[0]))
         self.assertIn("--enablerepo=remi-source", source_queries[0])
         self.assertEqual(source_queries[0][-1], "php-8.2.20-1.el7.remi")
         self.assertTrue(any(call[1] == "--checksig" for call in self.calls() if call[0] == "rpm"))
@@ -689,6 +715,97 @@ class CommandTests(TemporaryTest):
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("not cached", result.stderr)
         self.assertFalse(any(call[0] in ("curl", "repoquery") for call in self.calls()))
+
+    def test_source_http_location_uses_https_and_checks_signature(self):
+        environment = self.source_context()
+        environment["MOCK_SOURCE_HTTP"] = "1"
+        result = self.source_function("acquire_srpm", environment)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("advertised HTTP", result.stderr)
+        downloads = [call[-1] for call in self.calls() if call[0] == "curl"]
+        self.assertEqual(downloads, ["https://example.test/php-8.2.20-1.el7.remi.src.rpm"])
+        self.assertTrue(any(call[1] == "--checksig" for call in self.calls() if call[0] == "rpm"))
+
+    def test_source_query_failure_is_distinct_from_empty_results_and_persisted(self):
+        environment = self.source_context()
+        environment["MOCK_SOURCE_QUERY_FAIL"] = "1"
+        result = self.source_function("acquire_srpm", environment)
+        self.assertEqual(result.returncode, 6)
+        directory = pathlib.Path(environment["BUILD_DIR"]) / "source-discovery"
+        self.assertEqual((directory / "1.query").read_text().strip(), "remi-source\t42")
+        self.assertIn("Repository metadata lookup failed", result.stderr)
+        self.assertFalse(any(call[0] == "curl" for call in self.calls()))
+        environment.pop("MOCK_SOURCE_QUERY_FAIL")
+        environment["MOCK_SOURCE_EMPTY"] = "1"
+        shutil.rmtree(directory)
+        result = self.source_function("acquire_srpm", environment)
+        self.assertEqual(result.returncode, 6)
+        self.assertIn("returned no locations", result.stderr)
+        self.assertEqual((directory / "1.query").read_text().strip(), "remi-source\t0")
+
+    def test_source_html_and_wrong_package_locations_are_not_downloaded(self):
+        environment = self.source_context()
+        environment["MOCK_SOURCE_NOISE"] = "1"
+        result = self.source_function("acquire_srpm", environment)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("non-matching SRPM location", result.stderr)
+        self.assertEqual(sum(call[0] == "curl" for call in self.calls()), 1)
+
+    def remi_provider_context(self, original_available):
+        data = discovery()
+        source = "php83-php-8.3.8-1.el7.remi.src.rpm"
+        data["runtime"].update(version="8.3.8", branch="8.3")
+        data["family"].update(source_name="php83-php", source_reference=source,
+                              packages=[dict(vendor="Remi <https://rpms.remirepo.net/>")])
+        environment = self.source_context(data)
+        metadata.dump(dict(configured=[
+            dict(id="remi-safe", enabled=True, endpoints=[dict(host="rpms.remirepo.net", path="/enterprise/7/safe/")]),
+            dict(id="C7.9.2009-base", enabled=False, endpoints=[]),
+            dict(id="webtatic-source", enabled=False, endpoints=[dict(host="repo.webtatic.com", path="/SRPMS/")]),
+        ]), pathlib.Path(environment["WORK"]) / "repository-config.json")
+        metadata.dump(dict(candidates=[dict(repository="remi-safe", source=source)]),
+                      pathlib.Path(environment["WORK"]) / "repositories.json")
+        environment["MOCK_SOURCE_EMPTY"] = "1"
+        environment["MOCK_SRPM_IDENTITY"] = source + "\t1"
+        link = source if original_available else "php83-php-8.3.36-1.remi.src.rpm"
+        (self.host / "provider.html").write_text('<a href="../' + link + '">source</a>')
+        return environment
+
+    def test_remi_provider_index_retrieves_exact_parallel_srpm_without_source_repo(self):
+        environment = self.remi_provider_context(True)
+        result = self.source_function("acquire_srpm", environment)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        queries = [call for call in self.calls() if call[0] == "repoquery"]
+        self.assertEqual(len(queries), 1)
+        self.assertIn("--enablerepo=remi-safe", queries[0])
+        transfers = [call for call in self.calls() if call[0] == "curl"]
+        self.assertEqual(transfers[0][-1], "https://rpms.remirepo.net/SRPMS/repoview/php83-php.html")
+        self.assertIn("524288", transfers[0])
+        self.assertEqual(transfers[1][-1], "https://rpms.remirepo.net/SRPMS/php83-php-8.3.8-1.el7.remi.src.rpm")
+        self.assertTrue(any(call[1] == "--checksig" for call in self.calls() if call[0] == "rpm"))
+
+    def test_remi_provider_uses_historical_packaging_tag_when_original_srpm_is_missing(self):
+        environment = self.remi_provider_context(False)
+        result = self.source_function("acquire_srpm", environment)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        packaging = pathlib.Path(environment["BUILD_DIR"]) / "sources/packaging"
+        self.assertEqual(
+            (pathlib.Path(environment["BUILD_DIR"]) / "sources/packaging-trust").read_text().strip(),
+            "provider-published-packaging-tag-https",
+        )
+        self.assertTrue((packaging / "php83.spec").is_file())
+        self.assertTrue((packaging / "php.ini").is_file())
+        self.assertTrue((packaging / "provider-packaging.tsv").is_file())
+        self.assertIn("Newer or differently named SRPMs will not be substituted", result.stderr)
+        self.assertIn("historical packaging tag", result.stderr)
+        self.assertFalse(any(call[1] == "--checksig" for call in self.calls() if call[0] == "rpm"))
+
+    def test_remi_provider_lookup_can_work_without_native_query_tool(self):
+        environment = self.remi_provider_context(True)
+        environment["REPO_TOOL"] = ""
+        result = self.source_function("acquire_srpm", environment)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertFalse(any(call[0] == "repoquery" for call in self.calls()))
 
     @unittest.skipUnless(shutil.which("gpg") and shutil.which("gpgv"), "GnuPG is required for real source-signature tests")
     def test_real_debian_signature_and_members_are_verified(self):

@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 
 fetch() {
-    local url=$1 destination=$2 expected=${3:-} temporary attempt result family=
+    local url=$1 destination=$2 expected=${3:-} maximum=${4:-536870912} temporary attempt result family=
     meta https "$url" || die 5 "Refusing an invalid HTTPS source URL."
     if [[ -f $destination ]]; then
         if meta cache-check "$destination" "$url" "$expected"; then
@@ -22,7 +22,7 @@ fetch() {
         debug "HTTPS attempt $((attempt + 1)): $url"
         local -a request=(curl --disable --fail --silent --show-error
             --location --max-redirs 5 --proto '=https' --proto-redir '=https'
-            --connect-timeout 10 --max-time 300 --max-filesize 536870912)
+            --connect-timeout 10 --max-time 300 --max-filesize "$maximum")
         if [[ -n $family ]]; then request+=("$family"); fi
         if [[ -n $expected && -s $temporary ]]; then request+=(--continue-at -); fi
         if "${request[@]}" --output "$temporary" "$url" 2>>"$LOG_FILE"; then

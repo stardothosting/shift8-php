@@ -107,14 +107,36 @@ Source preparation checks:
 
 - **Upstream PHP:** the archive must match the SHA-256 published by PHP's release
   service and contain the expected version header.
-- **RPM packaging:** retrieve the exact installed SRPM, verify its signature
-  against installed trusted keys, and check its source identity.
+- **RPM packaging:** first try to retrieve the exact installed SRPM, verify its
+  signature against installed trusted keys, and check its source identity.
+  Search relevant source repositories, including disabled ones, before checking
+  an exact-match binary index that might also contain sources. Provider routing
+  uses matching package metadata, repository endpoints, configuration files and
+  signing-key references; it does not enable every archived repository on the
+  host. If the original SRPM is gone but the provider exposes a version-matched
+  historical packaging tag, preparation can stage those packaging files beside
+  the new upstream PHP tarball instead of failing immediately.
 - **Debian packaging:** verify the exact source package's signed `.dsc`, then
   download and verify every declared SHA-256 member.
 
-For historical packaging that cannot be retrieved as a native source package,
+For Remi packages, preparation also checks the provider's package-specific
+source page when native indexes return no usable location. This is a bounded
+metadata lookup, not a full repository listing or Git clone. Only a link naming
+the exact installed SRPM is accepted. An HTTP artifact location is tried over
+HTTPS at the same host/path, with certificate and RPM signature checks retained.
+
+An old `SOURCERPM` reference does not guarantee that the source is still online.
+If the exact file is missing, newer releases or source packages without the
+original distribution suffix are not substituted. For supported providers such
+as Remi, preparation next tries the package family's historical packaging tag
+for the installed PHP version and stages its root packaging files over HTTPS.
+That fallback is provider-published metadata, not an SRPM signature, and still
+requires review before any real rebuild claim.
+
+If neither the original SRPM nor a bounded provider packaging tag is available,
 `--source-map` accepts a reviewed list of HTTPS URLs and independently verified
-hashes. It is an explicit alternative, not automatic archive or Git discovery.
+hashes. It is an explicit alternative, not automatic archive or full Git
+history discovery.
 A map has this form:
 
 ```json
@@ -159,6 +181,13 @@ represented as vendor-signed material.
 Preparation prints the path to its manifest. The store contains per-run build
 directories, cached downloads and logs; unsuccessful runs may leave diagnostics
 and partial downloads but no success manifest.
+
+For RPM source lookup failures, the run's `source-discovery` directory records
+the selected/skipped repositories, query output, exit codes, stderr and any
+provider metadata checked. An empty successful query is reported separately from
+a failed metadata request. On CentOS 7, this avoids a slow sweep through unrelated
+disabled CentOS Vault and Webtatic repositories. It does not repair those
+repositories or make a missing historical source package available.
 
 The store and its standard subdirectories must be owned by the invoking account
 and have mode `0700`. Its parent directory must already exist. Symlinks,

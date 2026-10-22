@@ -19,10 +19,12 @@ from collections import namedtuple
 
 try:
     import configparser
-    from urllib.parse import urlsplit, urljoin
+    from urllib.parse import urlsplit, urljoin, parse_qs
+    from html.parser import HTMLParser
 except ImportError:
     import ConfigParser as configparser
-    from urlparse import urlsplit, urljoin
+    from urlparse import urlsplit, urljoin, parse_qs
+    from HTMLParser import HTMLParser
 
 try:
     STRING = basestring
@@ -620,11 +622,29 @@ def repository_config(kind, root="/"):
                     continue
                 options = dict(defaults)
                 options.update(dict(parser.items(section)))
+                urls = []
+                for key in ("baseurl", "mirrorlist", "metalink"):
+                    for value in options.get(key, "").split():
+                        parsed = urlsplit(value)
+                        if parsed.scheme in ("http", "https") and parsed.hostname:
+                            # Keep routing evidence, not repository credentials or query tokens.
+                            urls.append(dict(kind=key, host=parsed.hostname.lower(), path=parsed.path))
+                source_repository = bool(
+                    re.search(r"(?:^|[-_])(?:sources?|srpms?)(?:$|[-_])", section, re.I)
+                    or any(re.search(r"/(?:SRPMS|Sources?)(?:/|$)", item["path"], re.I) for item in urls)
+                )
+                signing_keys = []
+                for value in options.get("gpgkey", "").split():
+                    parsed = urlsplit(value)
+                    if parsed.scheme in ("http", "https", "file") and not parsed.username and not parsed.password:
+                        signing_keys.append(parsed.scheme + "://" + (parsed.hostname or "") + parsed.path)
                 repositories.append(dict(
                     id=section, enabled=options.get("enabled", "1") == "1",
                     gpgcheck=options.get("gpgcheck", "0") == "1",
                     repo_gpgcheck=options.get("repo_gpgcheck", "0") == "1",
                     configuration_file=str(path),
+                    endpoints=urls, source_repository=source_repository,
+                    signing_keys=signing_keys,
                     availability="not-queried", security_support="unknown",
                 ))
     else:
@@ -642,6 +662,147 @@ def repository_config(kind, root="/"):
                 availability="cached-index-only", security_support="unknown",
             ))
     return dict(configured=repositories, diagnostics=diagnostics)
+
+
+def source_repositories(discovery, configuration, repository_report):
+    repositories = configuration["configured"]
+    exact = {
+        item["repository"] for item in repository_report.get("candidates", [])
+        if item.get("source") == discovery["family"]["source_reference"]
+    }
+    provider_hosts = {
+        endpoint["host"] for item in repositories if item["id"] in exact
+        for endpoint in item.get("endpoints", [])
+    }
+    provider_files = {item.get("configuration_file") for item in repositories if item["id"] in exact} - {None}
+    provider_keys = {
+        key for item in repositories if item["id"] in exact for key in item.get("signing_keys", [])
+    }
+    vendor = " ".join(item.get("vendor", "") for item in discovery["family"].get("packages", []))
+    provider_hosts.update(
+        urlsplit(url.rstrip(">,)")).hostname.lower()
+        for url in re.findall(r"https?://[^\s<]+", vendor)
+        if urlsplit(url.rstrip(">,)")).hostname
+    )
+    source_ids, mixed_ids, excluded = [], [], []
+    for item in repositories:
+        identifier = item["id"]
+        is_source = item.get("source_repository", bool(re.search(r"(?:^|[-_])(?:sources?|srpms?)(?:$|[-_])", identifier, re.I)))
+        hosts = {endpoint["host"] for endpoint in item.get("endpoints", [])}
+        related = (
+            not (provider_hosts or provider_files or provider_keys)
+            or bool(provider_hosts & hosts)
+            or item.get("configuration_file") in provider_files
+            or bool(provider_keys & set(item.get("signing_keys", [])))
+        )
+        if is_source and related:
+            source_ids.append(identifier)
+        elif identifier in exact:
+            # An exact binary match may live in a mixed binary/source index.
+            mixed_ids.append(identifier)
+        else:
+            excluded.append(identifier)
+    enabled = {item["id"] for item in repositories if item.get("enabled")}
+    ordering = lambda identifier: (identifier not in enabled, identifier)
+    return dict(
+        source_repositories=sorted(set(source_ids), key=ordering),
+        mixed_repositories=sorted(set(mixed_ids), key=ordering),
+        excluded_repositories=sorted(set(excluded)),
+        provider_hosts=sorted(provider_hosts),
+        explanation="Query source-labelled repositories belonging to the package provider, then exact-match binary indexes that may contain sources.",
+    )
+
+
+def source_location(location, source):
+    filename(source)
+    parsed = urlsplit(location)
+    if parsed.scheme not in ("http", "https") or not parsed.hostname or parsed.username or parsed.password or parsed.fragment:
+        raise ValueError("Source location is not a credential-free HTTP(S) artifact URL")
+    if any(ord(character) < 33 for character in location) or os.path.basename(parsed.path) != source:
+        raise ValueError("Source location does not name the exact installed SRPM")
+    # HTTP metadata can identify an artifact; only HTTPS may carry its bytes.
+    return https("https:" + location[len(parsed.scheme) + 1:])
+
+
+def provider_source_index(discovery, plan):
+    # Remi publishes source packages separately from its installed binary .repo files.
+    if "rpms.remirepo.net" in plan["provider_hosts"]:
+        name = discovery["family"]["source_name"]
+        filename(name)
+        return "https://rpms.remirepo.net/SRPMS/repoview/" + name + ".html"
+    return ""
+
+
+def provider_packaging_tree(discovery, plan):
+    if "rpms.remirepo.net" in plan["provider_hosts"]:
+        version = discovery["runtime"]["version"]
+        if not VERSION.match(version):
+            raise ValueError("Cannot derive provider packaging tag from installed PHP version")
+        name = discovery["family"]["source_name"]
+        repo = name[:-4] if name.endswith("-php") else name
+        filename(repo)
+        return "https://git.remirepo.net/cgit/rpms/php/{}.git/tree/?h=v{}".format(repo, version)
+    return ""
+
+
+def provider_source_locations(path, url, source):
+    if os.stat(path).st_size > 524288:
+        raise ValueError("Provider package metadata exceeds 512 KiB")
+    https(url)
+    locations = set()
+
+    class SourceLinks(HTMLParser):
+        def handle_starttag(self, tag, attributes):
+            if tag != "a":
+                return
+            for name, value in attributes:
+                if name != "href" or not value:
+                    continue
+                location = urljoin(url, value)
+                parsed = urlsplit(location)
+                if parsed.hostname == urlsplit(url).hostname and os.path.basename(parsed.path) == source:
+                    locations.add(source_location(location, source))
+
+    parser = SourceLinks()
+    parser.feed(read(path))
+    parser.close()
+    return sorted(locations)
+
+
+def provider_packaging_files(path, url):
+    if os.stat(path).st_size > 1048576:
+        raise ValueError("Provider packaging metadata exceeds 1 MiB")
+    https(url)
+    page = urlsplit(url)
+    tag = parse_qs(page.query).get("h", [""])[0]
+    if not re.match(r"v\d+\.\d+\.\d+\Z", tag):
+        raise ValueError("Provider packaging metadata needs an exact PHP packaging tag")
+    files = {}
+
+    class PackagingLinks(HTMLParser):
+        def handle_starttag(self, tag_name, attributes):
+            if tag_name != "a":
+                return
+            for name, value in attributes:
+                if name != "href" or not value:
+                    continue
+                location = urljoin(url, value)
+                parsed = urlsplit(location)
+                if parsed.hostname != page.hostname or "/plain/" not in parsed.path:
+                    continue
+                if parse_qs(parsed.query).get("h", [""])[0] != tag:
+                    continue
+                relative = parsed.path.split("/plain/", 1)[1].strip("/")
+                if "/" in relative:
+                    continue
+                files[filename(relative)] = https(location)
+
+    parser = PackagingLinks()
+    parser.feed(read(path))
+    parser.close()
+    if len(files) > 1000:
+        raise ValueError("Provider packaging metadata declares too many files")
+    return sorted(files.items())
 
 
 def repositories(directory, status):
@@ -936,6 +1097,20 @@ def main(arguments):
         dump(select(load(args[0]), load(args[1]), load(args[2]), args[3]))
     elif command == "repository-config":
         dump(repository_config(*args))
+    elif command == "source-repositories":
+        dump(source_repositories(load(args[0]), load(args[1]), load(args[2])))
+    elif command == "source-location":
+        print(source_location(*args))
+    elif command == "provider-source-index":
+        print(provider_source_index(load(args[0]), load(args[1])))
+    elif command == "provider-packaging-tree":
+        print(provider_packaging_tree(load(args[0]), load(args[1])))
+    elif command == "provider-source-locations":
+        for location in provider_source_locations(*args):
+            print(location)
+    elif command == "provider-packaging-files":
+        for record in provider_packaging_files(*args):
+            print("\t".join(record))
     elif command == "repository-ids":
         identifiers = sorted({
             item["id"] for item in load(args[0])["configured"]

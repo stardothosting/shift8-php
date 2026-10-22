@@ -12,12 +12,21 @@ EL7 production build.
 - The metadata helper supports Python 2.7 and Python 3.6+, with native `tar` for
   XZ archive inspection. A real Python 2.7 container smoke covers metadata and
   full CLI discovery with Python 3 unavailable. Python itself remains a dependency.
-- The source adapter authenticates PHP release bytes and original packaging.
-  Exact SRPM retrieval searches configured enabled/disabled repositories. If it
-  fails, use a reviewed source map for historical individual files/patches or
-  independently verified archived material. There is no URL guessing or clone
-  retry loop. This release does not automatically discover arbitrary archive/Git
-  revisions or attest the completeness of a manually reconstructed file map.
+- The source adapter authenticates PHP release bytes and tries to authenticate
+  original RPM packaging first. Exact SRPM retrieval selects provider-related
+  source indexes (enabled or disabled) and exact-match binary indexes that
+  might also publish sources. Remi's package-specific source page is checked as
+  a separate fallback; exact SRPM downloads still require the original source
+  identity and a trusted RPM signature. If the old SRPM has disappeared but the
+  provider publishes a version-matched historical packaging tag, the adapter can
+  stage those root packaging files over HTTPS next to the new upstream tarball.
+  That fallback is not equivalent to a signed SRPM and does not attest file-set
+  completeness. If all of that fails, use a reviewed source map for historical
+  individual files/patches or independently verified archived material. There is
+  no URL guessing or clone retry loop. Source-query output, exit codes and
+  errors are retained under `source-discovery`; empty results are not labelled
+  network failures. Yum uses its supported `logfile` setting, while DNF uses
+  `logdir`.
 - The build adapter accepts explicitly reviewed final packaging. It does not
   rewrite spec text based on guessed `%patch47` syntax. Native `rpmspec` inside
   mock expands the actual target RPM macros; the expanded `%prep` script records

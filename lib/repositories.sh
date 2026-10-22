@@ -54,13 +54,17 @@ rpm_query() {
     local -a options=(
         "--setopt=cachedir=$WORK/repository-cache"
         "--setopt=persistdir=$WORK/repository-cache"
-        "--setopt=logdir=$WORK/repository-cache"
         "--setopt=plugins=0"
         "--setopt=timeout=15" "--setopt=retries=2"
         "--setopt=sslverify=1" "--setopt=$id.sslverify=1"
         "--setopt=reposdir=/etc/yum.repos.d"
         "--disablerepo=*" "--enablerepo=$id"
     )
+    if [[ $REPO_TOOL == dnf ]]; then
+        options+=("--setopt=logdir=$WORK/repository-cache")
+    else
+        options+=("--setopt=logfile=$WORK/repository-cache/yum.log")
+    fi
     if ((IPV4)); then options+=("--setopt=ip_resolve=4"); fi
     if [[ $REPO_TOOL == dnf ]]; then
         if [[ $operation == providers ]]; then
@@ -77,7 +81,7 @@ rpm_query() {
     elif [[ $operation == reverse ]]; then
         repoquery "${options[@]}" --installed --whatrequires --alldeps "$identifier"
     elif [[ $operation == sources ]]; then
-        repoquery "${options[@]}" --archlist=src --location "$identifier"
+        repoquery "${options[@]}" --show-duplicates --archlist=src --location "$identifier"
     else
         repoquery "${options[@]}" --qf '%{name}\t%{epoch}\t%{version}\t%{release}\t%{arch}\t%{sourcerpm}' "$identifier"
     fi
