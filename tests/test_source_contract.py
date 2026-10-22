@@ -131,6 +131,51 @@ class SourceContractTests(TemporaryTest):
         self.assertEqual(libraries["libxml2"]["maintenance_status"], "not-established")
         self.assertIn("oniguruma", libraries)
 
+    def test_separately_packaged_zip_keeps_libzip_dependency_without_changing_provider(self):
+        data = snapshot()
+        data["runtime"]["loaded_extensions"].append("zip")
+        data["family"]["packages"].append(dict(
+            name="php-pecl-zip", version="1.22.3", release="1.el7", role="separate-extension",
+            files=["/usr/lib64/php/modules/zip.so"], configuration_files=[],
+        ))
+        data["runtime"]["build"]["Libzip library version"] = "1.10.1"
+        plan = source.contract(data, release())
+        libraries = {item["name"]: item for item in plan["dependencies"]}
+        self.assertIn("libzip", libraries)
+        self.assertEqual(libraries["libzip"]["observed"], "1.10.1")
+        self.assertNotIn("zip", [item["name"] for item in plan["features"]])
+        self.assertIn("php-pecl-zip", [item["name"] for item in plan["separately_packaged_extensions"]])
+
+    def test_library_and_feature_phpinfo_keys_are_allowlisted_without_secrets(self):
+        text = (
+            "PHP Version => 8.3.36\nPHP API => 20230831\nPHP Extension => 20230831\n"
+            "Zend Extension => 420230831\nThread Safety => disabled\n"
+            "extension_dir => /usr/lib64/php/modules\n"
+            "Libzip version => 1.10.1\nLibzip headers version => 1.10.0\nLibzip library version => 1.10.1\n"
+            "AES-256 encryption => No\nJPEG Support => enabled\nFreeType Support => enabled\n"
+            "APP_SECRET => must-not-store\n"
+        )
+        info = metadata.phpinfo(text)
+        self.assertEqual(info["Libzip library version"], "1.10.1")
+        self.assertEqual(info["AES-256 encryption"], "No")
+        self.assertEqual(info["JPEG Support"], "enabled")
+        self.assertNotIn("APP_SECRET", info)
+
+    def test_capability_tradeoffs_are_not_hidden_by_extension_presence(self):
+        data = snapshot()
+        data["runtime"]["loaded_extensions"].extend(["zip", "gd"])
+        data["runtime"]["build"].update({
+            "AES-128 encryption": "No", "AES-192 encryption": "No", "AES-256 encryption": "No",
+            "JPEG Support": "enabled", "FreeType Support": "enabled",
+        })
+        plan = source.contract(data, release())
+        capabilities = {(item["feature"], item["name"]): item for item in plan["capabilities"]}
+        self.assertFalse(capabilities[("zip", "aes-256")]["observed"])
+        self.assertFalse(capabilities[("zip", "aes-256")]["required"])
+        self.assertTrue(capabilities[("gd", "jpeg")]["required"])
+        self.assertTrue(capabilities[("gd", "freetype")]["required"])
+        self.assertIsNone(capabilities[("gd", "webp")]["observed"])
+
     def test_contract_identity_excludes_host_configuration_bytes_and_deployment_state(self):
         data = snapshot()
         baseline = source.contract(data, release())

@@ -241,6 +241,9 @@ def phpinfo(text):
         "OpenSSL Library Version", "OpenSSL Header Version",
         "libXML Compiled Version", "libXML Loaded Version", "ICU version",
         "cURL Information", "SQLite Library", "libzip version",
+        "Libzip version", "Libzip headers version", "Libzip library version",
+        "AES-128 encryption", "AES-192 encryption", "AES-256 encryption",
+        "JPEG Support", "PNG Support", "FreeType Support", "WebP Support", "AVIF Support",
     }
     result = {}
     for line in text.splitlines():

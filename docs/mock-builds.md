@@ -61,6 +61,69 @@ No installed PHP files, host libraries or services were changed. This is native
 evidence for inspection/source preparation only, not a source-first build or
 deployment test.
 
+### Lessons from the multi-server source rollout
+
+The supplied rollout reference describes PHP 8.3.36 installed beside older
+PHP installations under a new prefix, with OpenSSL 1.1.1 and private libzip
+1.10.1. It reports FPM startup on three CentOS 7.9 hosts, but explicitly leaves
+web cutover, retirement and several PECL modules incomplete. That is valuable
+operational evidence, not a complete parity/security certification. Its paths,
+ports, users, historical hashes and library versions are examples, not defaults.
+
+Keep two workflows distinct:
+
+- **Patch replacement:** a maintained patch release in the same PHP branch,
+  preserving the existing paths/configuration through a managed replacement.
+  This remains the project's original objective and current planner's scope.
+- **Side-by-side migration:** a different branch or deliberately separate
+  prefix/service/listener. Build and validate independently; route only approved
+  applications later. PHP 7.4/8.2 to 8.3 is an application migration, not a
+  transparent patch replacement. This mode is not implemented.
+
+Both can share source authentication, dependency resolution, build profiles and
+validation. They cannot share an implicit cutover or retirement policy. An
+installed Apache module blocks in-place replacement until handled; it should
+not necessarily block a future independent FPM deployment that leaves it alone.
+Likewise stale RPM metadata requires reconciliation for managed replacement,
+but should not cause a future side-by-side builder to overwrite the old runtime.
+
+| Rollout lesson | Current evidence / next implementation requirement |
+| --- | --- |
+| Lost configure arguments, stray bare `--` | Proposals are arrays and never replay the historical shell command. Before building, validate the full resolved profile, reject malformed arguments and verify the resulting features. No complete source-first profile executor exists yet. |
+| Parallel OpenSSL headers versus runtime | Select explicit pkg-config module, headers, link flags and runtime path as one provider. Verify the final loaded version and ELF closure, not only a direct FPM `ldd` line. Built-in OpenSSL must not require `openssl.so`. Provider resolution is not implemented. |
+| Old system libzip / unavailable devel RPM | Keep libzip requirements even when ZIP is a separately packaged extension. PHP's actual `Libzip version` and header/library keys are allow-listed. A missing trusted package must lead to an approved private build, not guessed package names. |
+| ZIP present but AES disabled; GD missing formats | Contract capability records preserve observed AES/JPEG/FreeType/etc. support. Unknown is not false. Final API-level feature tests and explicit application requirements remain mandatory; the private libzip recipe must not silently disable AES. |
+| Correct build rejected by `grep -q`/pipefail | Verification should consume captured command output, distinguish command failure from mismatch, and be rerunnable independently of compilation. Add the actual SIGPIPE regression with the verifier implementation. |
+| Service active before listener is ready | Bounded readiness must combine compatible systemd property output, master PID/executable, and TCP/Unix listener ownership. Current service discovery does not establish readiness. No foreign listener may be stopped to make a check pass. |
+| Root-only runtime/library directories | Keep artifact/state/backup stores private, but assign intentional runtime modes during staged installation. Never reuse artifact hardening on the installation prefix. Test execution/module loading as every relevant pool user; preserve SELinux enforcement. |
+| Missing completion marker after successful startup | Use atomic, fingerprint-bound stage state reconciled with actual files/processes. Verification must not require a success marker or cause a rebuild. Build/deploy/finalize state recovery is not implemented. |
+| Core parity without Redis/Memcached/etc. | Separately packaged modules retain explicit source/provider decisions. Dependency ordering, target phpize/php-config, ABI and application parity are mandatory. Core extension success is not full parity. |
+| Multiple package families / aliases / routes | The selected package family is isolated today. Complete all-runtime, process, active web include/upstream, cron and CLI resolution inventory remains to be implemented. Never infer application routing from the default CLI. |
+| FPM started but sites not moved | Keep built, staged, baseline-deployed, application-verified, cutover and retired as separate states. No automatic Nginx edits or old-PHP removal on build/deploy success. |
+| Historical compatibility libraries | OpenSSL 1.1.1 compatibility is not current security support. Resolve lifecycle policy independently from buildability; an explicit compatibility exception must not be described as supported or secure. |
+
+Prioritize the remaining work in dependency order:
+
+1. Complete installation/provider facts: all runtimes, actual loaded/shared
+   modules and versions, phpize/php-config, pool users/listeners and active routes.
+   Capture only allow-listed build variables; redact application credentials.
+2. Resolve pinned library providers and complete argument/environment arrays.
+   Preserve capability requirements and validate a final dependency graph.
+   CMake/libzip flags, JIT and compiler choices belong to resolved profiles.
+3. Implement the source-first isolated builder and reusable validate-build
+   checks. Install through a staging root, never live `make install`; validate
+   archive members/link targets and final files before promotion.
+4. Add fingerprinted state/recovery, actual-file backups, non-root permissions
+   and mode-specific deployment. A private-prefix payload can be packaged without
+   requiring the original vendor spec. In-place payloads need package-aware
+   file ownership and complete rollback.
+5. Add identity-bound service readiness and FastCGI/application probes before
+   explicit routing changes. Rehearse routing/runtime rollback before retirement.
+
+The reference does not include the accompanying full rollout script or its
+complete effective configure array. Do not invent the omitted arguments or
+claim that reproducing the listed subset reproduces the three deployed builds.
+
 This is an **experimental build driver**, not certification that PHP 8.2.35 or
 any future release is production-safe on EL7. Its orchestration is regression
 tested with a mock-command fixture. A parallel Remi PHP 8.3.36 build has also

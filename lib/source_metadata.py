@@ -164,8 +164,10 @@ def contract(discovery, release):
         extra_modules.update(module_name(os.path.basename(path)[:-3]) for path in item["files"])
     required = {module_name(item) for item in runtime["loaded_extensions"]}
     features, dependencies = [], {"libxml2", "openssl"}
-    for name in sorted(required | set(shared)):
+    for name in sorted(required | set(shared) | extra_modules):
         if name in extra_modules:
+            if name in FEATURES:
+                dependencies.update(FEATURES[name][1])
             continue
         if name in BUILTINS:
             continue
@@ -181,6 +183,28 @@ def contract(discovery, release):
         if feature["linkage"] == "shared":
             option += "=shared"
         configure.append(option)
+    capabilities = []
+    for feature, definitions in (
+        ("zip", (("aes-128", "AES-128 encryption"), ("aes-192", "AES-192 encryption"), ("aes-256", "AES-256 encryption"))),
+        ("gd", (("jpeg", "JPEG Support"), ("png", "PNG Support"), ("freetype", "FreeType Support"),
+                ("webp", "WebP Support"), ("avif", "AVIF Support"))),
+    ):
+        if feature not in required | set(shared) | extra_modules:
+            continue
+        for name, key in definitions:
+            raw = build.get(key)
+            observed = None
+            if isinstance(raw, meta.STRING):
+                if raw.lower() in ("enabled", "yes"):
+                    observed = True
+                elif raw.lower() in ("disabled", "no"):
+                    observed = False
+            capabilities.append(dict(
+                feature=feature, name=name, observed=observed,
+                required=True if observed is True else (False if observed is False else None),
+                evidence=dict(source="allowlisted-phpinfo; final-runtime-probe-required", key=key, value=raw),
+                policy="Preserve observed enabled capabilities; unknown/application requirements need explicit resolution.",
+            ))
     if extension_packages:
         checks.append("Verify/rebuild every separately packaged extension with the final runtime and private dependency graph.")
     if discovery.get("installation_state", {}).get("package_runtime_drift"):
@@ -193,12 +217,14 @@ def contract(discovery, release):
     versions = {key: build[key] for key in (
         "OpenSSL Library Version", "OpenSSL Header Version", "libXML Compiled Version",
         "libXML Loaded Version", "ICU version", "cURL Information", "SQLite Library", "libzip version",
+        "Libzip version", "Libzip headers version", "Libzip library version",
     ) if key in build}
     requirements = []
     observations = {
         "openssl": build.get("OpenSSL Library Version"), "libxml2": build.get("libXML Loaded Version"),
         "icu": build.get("ICU version"), "curl": build.get("cURL Information"),
-        "sqlite": build.get("SQLite Library"), "libzip": build.get("libzip version"),
+        "sqlite": build.get("SQLite Library"),
+        "libzip": build.get("Libzip library version") or build.get("Libzip version") or build.get("libzip version"),
     }
     for name in sorted(dependencies):
         old_openssl = name == "openssl" and re.match(r"OpenSSL (?:0\.|1\.)", observations.get(name) or "")
@@ -212,6 +238,7 @@ def contract(discovery, release):
         ))
     checks.extend([
         "Resolve an authenticated, maintained dependency closure; inspect overlapping OpenSSL/libxml consumers including PECL, curl and LDAP.",
+        "Probe ZIP encryption and GD formats in the final CLI/FPM runtime; extension loading alone does not establish feature parity.",
         "Compare final modules, ABI/ZTS, configuration and runtime paths; preserve configuration bytes, ownership, modes and SELinux labels.",
         "Validate real FPM pools, web routing and application health without altering production during staging.",
         "Capture actual installed recovery payload and rehearse the exact upgrade/rollback transaction.",
@@ -220,7 +247,7 @@ def contract(discovery, release):
     build_inputs = dict(platform="centos-7.9", architecture=discovery["architecture"],
                         target=release["version"], upstream=release["source"], layout=paths,
                         abi={key: runtime[key] for key in ("php_api", "module_api", "zend_extension_api", "zts")},
-                        features=features,
+                        features=features, capabilities=capabilities,
                         dependencies=[dict(name=item["name"], policy=item["policy"]) for item in requirements])
     return dict(
         schema_version=1, strategy="source-first-managed-replacement",
@@ -228,7 +255,7 @@ def contract(discovery, release):
         deployable=False, build_ready=False, historical_packaging_required=False,
         installed_runtime=runtime["version"], target=release["version"], branch=branch,
         installation_state=discovery.get("installation_state"),
-        layout=dict(adapter=layout_id, paths=paths), features=features,
+        layout=dict(adapter=layout_id, paths=paths), features=features, capabilities=capabilities,
         configure_arguments=configure, configure_arguments_executable=False,
         dependencies=requirements, observed_library_versions=versions,
         separately_packaged_extensions=extension_packages,
