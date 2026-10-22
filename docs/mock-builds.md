@@ -267,7 +267,8 @@ reports a missing interpreter explicitly.
 **Failed or missing PHP test summaries now stop preparation**, even if the
 provider spec returns zero. The build keeps its diagnostic files and isolated
 root, writes `failed:php-tests`, and does not write a success manifest. There is
-no waiver for these test names. Unknown scenarios stay blocked until a bounded
+also no success for an empty/all-skipped suite or missing environment evidence.
+There is no waiver for these test names. Unknown scenarios stay blocked until a bounded
 fix is reviewed and exercised. Unrelated upstream capability-based skips remain
 visible; a skipped test is not evidence that its feature passed.
 
@@ -278,6 +279,15 @@ vendor-modified runtime can create a different failure, such as the custom-EC
 parameter test that this Remi spec explicitly removes during `%prep`.
 Rebuild when runtime source, configuration or final packaging changes; never
 retroactively change an existing manifest's evidence.
+
+With the final generated recipe applied by native `%prep`, the adjacent
+OpenSSL, directory and CLI suites have run against the existing PHP 8.3.36
+RPMs: 294 passed, zero failed, 30 upstream capability/environment skips
+(324 total), with all three previously failing tests executed and passing.
+The selected locale was `en_US.utf8`, and the wrapper ran as the namespace's
+PID 1. This verifies the scenario fixes without another full compilation.
+Existing RPMs/manifests retain their original full-build test evidence; a new
+package build must use the updated recipe and pass the strict test gate.
 
 Builds are gated to **CentOS 7 with reviewed Remi PHP profiles**. Supported
 families in this release are standard Remi PHP 8.2 and parallel Remi

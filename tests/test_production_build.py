@@ -284,6 +284,16 @@ acquire_sources
         with self.assertRaisesRegex(ValueError, "measured isolated build environment"):
             build.test_report(str(self.directory), "enforce")
 
+    def test_enforced_suite_rejects_all_skipped_or_missing_pass_counts(self):
+        logs = self.directory / "build-logs"
+        logs.mkdir()
+        (logs / "compile.stderr").write_text("")
+        marker = 'SHIFT8_BUILD_ENVIRONMENT {"pid": 1, "reaper": "pid-1", "utf8_locale": "C.utf8"}\n'
+        for summary in ("Tests failed : 0\n", "Tests failed : 0\nTests passed : 0\nTests skipped : 12\n"):
+            (logs / "compile.stdout").write_text(marker + summary)
+            with self.assertRaisesRegex(ValueError, "nonempty passing result"):
+                build.test_report(str(self.directory), "enforce")
+
     def test_pinned_resume_rejects_symlinks_and_shared_files(self):
         path = self.directory / "partial"
         target = self.write("target", "source")
@@ -492,6 +502,7 @@ elif "-ba" in args:
     print('SHIFT8_BUILD_ENVIRONMENT {"reaper": "pid-1", "pid": 1, "utf8_locale": "en_US.utf8"}')
     if not os.environ.get("MISSING_TEST_SUMMARY"):
         print("Tests failed : " + ("1" if os.environ.get("TOLERATED_TEST_FAILURE") else "0"))
+        print("Tests passed : 1")
 elif "--copyout" in args:
     source = args[args.index("--copyout") + 1]
     destination = pathlib.Path(args[-1])

@@ -291,7 +291,7 @@ def test_report(directory, enforcement="report"):
     if enforcement not in ("report", "enforce"):
         raise ValueError("Unknown PHP test reporting policy: " + enforcement)
     logs = os.path.join(directory, "build-logs")
-    summaries, failures, environments = [], [], []
+    summaries, failures, environments, passes, skips = [], [], [], [], []
     for name in ("compile.stdout", "compile.stderr"):
         text = meta.read(os.path.join(logs, name))
         for value in re.findall(r"(?m)^SHIFT8_BUILD_ENVIRONMENT (.+)$", text):
@@ -304,11 +304,14 @@ def test_report(directory, enforcement="report"):
                 raise ValueError("Malformed isolated build environment evidence")
             environments.append(facts)
         summaries.extend(int(value) for value in re.findall(r"(?m)^Tests failed\s*:\s*(\d+)", text))
+        passes.extend(int(value) for value in re.findall(r"(?m)^Tests passed\s*:\s*(\d+)", text))
+        skips.extend(int(value) for value in re.findall(r"(?m)^Tests skipped\s*:\s*(\d+)", text))
         failures.extend(re.findall(r"(?m)^TEST FAILURE: (.+?) --\s*$", text))
         for match in re.finditer(r"(?m)^FAILED TEST SUMMARY\s*\n-+\s*\n(.*?)(?=^=+|\Z)", text, re.DOTALL):
             failures.extend(line.strip() for line in match.group(1).splitlines() if line.strip())
     status = "failed" if any(summaries) or failures else ("passed" if summaries else "not-reported")
     meta.dump(dict(status=status, failed_counts=summaries, failures=sorted(set(failures)),
+                   passed_counts=passes, skipped_counts=skips,
                    build_environments=environments,
                    deployable=False, policy="RPM build success is not evidence that PHP tests passed."),
               os.path.join(directory, "php-tests.json"))
@@ -319,6 +322,8 @@ def test_report(directory, enforcement="report"):
             raise ValueError("PHP test gate failed: {}; fix the scenario and rerun; no test waiver is applied".format(status))
     if enforcement == "enforce" and len(environments) != 1:
         raise ValueError("PHP test gate requires exactly one measured isolated build environment")
+    if enforcement == "enforce" and (len(passes) != len(summaries) or not all(passes)):
+        raise ValueError("PHP test gate requires a nonempty passing result for every reported suite")
 
 
 def transaction_report(directory, discovery_path):
