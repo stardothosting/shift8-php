@@ -225,7 +225,7 @@ class ProductionTests(ProductionFixture):
         logs = directory / "build-logs"
         logs.mkdir()
         (logs / "spec.stdout").write_text("Name: php\n%prep\npatch --fuzz=0 -p1 < system-timezone.patch\npatch --fuzz=0 -p1 < phpinfo.patch\n%build\nmake\n")
-        (logs / "spec-identity.stdout").write_text("php\t8.2.35\n")
+        (logs / "spec-identity.stdout").write_text("wrapper warning\nphp\t8.2.35\n")
         (logs / "buildrequires.stdout").write_text("pkgconfig(oniguruma)\npkgconfig(gdlib)\npkgconfig(icu-uc)\n")
         build.spec_report(str(directory))
         report = metadata.load(directory / "spec-report.json")

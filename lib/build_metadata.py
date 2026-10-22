@@ -139,7 +139,9 @@ def validate_staged(directory):
 def spec_report(directory):
     logs = os.path.join(directory, "build-logs")
     parsed = meta.read(os.path.join(logs, "spec.stdout"))
-    identity = meta.read(os.path.join(logs, "spec-identity.stdout")).strip().split("\t")
+    identity_text = meta.read(os.path.join(logs, "spec-identity.stdout")).strip()
+    identity_match = re.search(r"(?m)^([^\t\n]+)\t([^\t\n]+)$", identity_text)
+    identity = list(identity_match.groups()) if identity_match else identity_text.split("\t")
     discovery = meta.load(os.path.join(directory, "discovery.json"))
     release = meta.load(os.path.join(directory, "release.json"))
     if identity != [discovery["family"]["source_name"], release["version"]]:
