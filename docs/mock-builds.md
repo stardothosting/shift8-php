@@ -277,8 +277,46 @@ To investigate reuse on another server:
 ```
 
 An exact complete fingerprint is necessary, **not sufficient**, for deployment.
-No automatic artifact transfer, native transaction simulation, binary runtime/
-extension/FPM/application validation, private RPM signing, configuration backup,
+No automatic artifact transfer, binary runtime/extension/FPM/application
+validation, private RPM signing, configuration backup,
 recovery-package capture or rollback execution is implemented yet. All generated
 RPMs are treated as local unsigned artifacts, never vendor-authenticated.
 Neither compilation nor this static inspection establishes production readiness.
+
+For a native dependency/file-conflict transaction check on the matching host:
+
+```sh
+./shift8-php discover php83-php-cli > /private/current-discovery.json
+python3 lib/build_metadata.py transaction \
+  /absolute/prepared/build-directory /private/current-discovery.json
+```
+
+This verifies the manifest and the complete discovery fingerprint, then runs
+only `rpm -Uvh --test` with the selected installed-core replacements. It does not
+install packages, execute scriptlets, restart FPM, select extra built modules or
+use force/nodeps/signature-bypass flags. Results are saved to
+`transaction-check.json`, bound to the manifest digest; failure exits nonzero.
+Supply freshly collected discovery, not a copied old snapshot. This check
+does not establish application health or rollback readiness. Package scriptlets
+may restart FPM during a real upgrade, even though this test never runs them.
+
+For isolated runtime smoke checks, install the selected RPMs and exact retained
+PECL versions into a separate disposable mock root, never onto the live host.
+Copy `tests/runtime-smoke.php` and the baseline discovery JSON into that root.
+Run the built CLI with its packaged configuration:
+
+```sh
+# Inside the isolated root only:
+/opt/remi/php83/root/usr/bin/php -d apc.enable_cli=1 -d ffi.enable=1 \
+  /builddir/runtime-smoke.php 8.3.36 /builddir/baseline.json
+/opt/remi/php83/root/usr/sbin/php-fpm -t
+```
+
+The smoke requires every baseline module to load and exercises PHP primitives,
+crypto sign/verify (including rejection of altered data), SQLite, GD, selected
+PECL APIs and, when installed, the FFI directives and ICU path touched by the EL7
+recipe. It does not connect to production databases/cache services. Also run
+upstream OpenSSL SAN/peer-verification tests against the built CLI; simple
+extension loading is not a substitute for testing certificate-name validation.
+Packaged FPM configuration checks are not validation of a production site's
+custom pools, credentials, sockets or application traffic.

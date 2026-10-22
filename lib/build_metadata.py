@@ -278,6 +278,7 @@ def test_report(directory):
     for name in ("compile.stdout", "compile.stderr"):
         text = meta.read(os.path.join(logs, name))
         summaries.extend(int(value) for value in re.findall(r"(?m)^Tests failed\s*:\s*(\d+)", text))
+        failures.extend(re.findall(r"(?m)^TEST FAILURE: (.+?) --\s*$", text))
         for match in re.finditer(r"(?m)^FAILED TEST SUMMARY\s*\n-+\s*\n(.*?)(?=^=+|\Z)", text, re.DOTALL):
             failures.extend(line.strip() for line in match.group(1).splitlines() if line.strip())
     status = "failed" if any(summaries) or failures else ("passed" if summaries else "not-reported")
@@ -287,6 +288,42 @@ def test_report(directory):
     if status != "passed":
         print("[shift8-php] WARNING: PHP tests {}; inspect php-tests.json and native logs. "
               "Do not install these artifacts on production.".format(status), file=sys.stderr)
+
+
+def transaction_report(directory, discovery_path):
+    manifest_path = os.path.join(directory, "manifest.json")
+    meta.verify_manifest(manifest_path)
+    manifest = meta.load(manifest_path)
+    if manifest["kind"] != "isolated-rpm-build":
+        raise ValueError("Transaction testing requires an isolated RPM build manifest")
+    actual = meta.load(discovery_path).get("compatibility", {})
+    expected = manifest["discovery"].get("compatibility", {})
+    if not actual.get("complete") or not expected.get("complete") or actual.get("sha256") != expected.get("sha256"):
+        raise ValueError("Transaction-test host differs from the complete build compatibility fingerprint")
+    paths = []
+    listed = {item["path"] for item in manifest["files"]}
+    for item in manifest["build"]["replacements"]:
+        if item["path"] not in listed:
+            raise ValueError("Replacement RPM is not covered by the manifest")
+        path = os.path.abspath(os.path.join(directory, item["path"]))
+        if meta.digest(path) != item["sha256"]:
+            raise ValueError("Replacement RPM differs from its recorded digest")
+        paths.append(path)
+    if not paths:
+        raise ValueError("No core replacement RPMs to test")
+    command = ["rpm", "-Uvh", "--test"] + paths
+    result = meta.run(command)
+    report = dict(
+        status="passed" if result.returncode == 0 else "failed",
+        exit_code=result.returncode, stdout=result.stdout, stderr=result.stderr,
+        manifest_sha256=meta.digest(manifest_path), compatibility_sha256=actual["sha256"],
+        command=command, changed_host_php=False, executed_scriptlets=False, deployable=False,
+        limitations="Native RPM transaction test only; runtime, application, signatures and rollback are not certified.",
+    )
+    meta.dump(report, os.path.join(directory, "transaction-check.json"))
+    if result.returncode:
+        raise ValueError("Read-only RPM transaction test failed; inspect transaction-check.json")
+    print("Native RPM --test passed; no packages installed or scriptlets run. Deployment remains disabled.")
 
 
 def artifact_report(directory):
@@ -374,6 +411,8 @@ def main(args):
         artifact_report(*args)
     elif command == "tests":
         test_report(*args)
+    elif command == "transaction":
+        transaction_report(*args)
     elif command == "failure":
         failure(*args)
     elif command == "input-id":

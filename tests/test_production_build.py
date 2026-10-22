@@ -220,6 +220,50 @@ acquire_sources
         self.assertEqual(report["failures"], ["OpenSSL error test [openssl.phpt]"])
         self.assertFalse(report["deployable"])
 
+    def transaction_inputs(self):
+        package = self.write("packages/php-cli.rpm", "fixture RPM")
+        fingerprint = dict(complete=True, sha256="f" * 64)
+        manifest = dict(
+            kind="isolated-rpm-build", discovery=dict(compatibility=fingerprint),
+            files=[dict(path="packages/php-cli.rpm")],
+            build=dict(replacements=[dict(path="packages/php-cli.rpm", sha256=metadata.digest(package))]),
+        )
+        metadata.dump(manifest, self.directory / "manifest.json")
+        actual = self.directory / "current-discovery.json"
+        metadata.dump(dict(compatibility=fingerprint), actual)
+        return actual
+
+    def test_transaction_always_uses_test_mode_and_only_selected_rpms(self):
+        actual = self.transaction_inputs()
+        result = subprocess.CompletedProcess([], 0, stdout="Preparing", stderr="")
+        with mock.patch.object(build.meta, "verify_manifest") as verify, mock.patch.object(build.meta, "run", return_value=result) as run:
+            build.transaction_report(str(self.directory), str(actual))
+        verify.assert_called_once_with(str(self.directory / "manifest.json"))
+        self.assertEqual(run.call_args[0][0], ["rpm", "-Uvh", "--test", str(self.directory / "packages/php-cli.rpm")])
+        report = metadata.load(self.directory / "transaction-check.json")
+        self.assertEqual(report["status"], "passed")
+        self.assertFalse(report["changed_host_php"])
+        self.assertFalse(report["executed_scriptlets"])
+        self.assertFalse(report["deployable"])
+
+    def test_transaction_rejects_host_mismatch_before_running_rpm(self):
+        actual = self.transaction_inputs()
+        metadata.dump(dict(compatibility=dict(complete=False, sha256="f" * 64)), actual)
+        with mock.patch.object(build.meta, "verify_manifest"), mock.patch.object(build.meta, "run") as run:
+            with self.assertRaisesRegex(ValueError, "host differs"):
+                build.transaction_report(str(self.directory), str(actual))
+        run.assert_not_called()
+
+    def test_transaction_failure_is_reported_not_applied_or_forced(self):
+        actual = self.transaction_inputs()
+        result = subprocess.CompletedProcess([], 1, stdout="", stderr="file conflict")
+        with mock.patch.object(build.meta, "verify_manifest"), mock.patch.object(build.meta, "run", return_value=result):
+            with self.assertRaisesRegex(ValueError, "transaction test failed"):
+                build.transaction_report(str(self.directory), str(actual))
+        report = metadata.load(self.directory / "transaction-check.json")
+        self.assertEqual(report["status"], "failed")
+        self.assertIn("file conflict", report["stderr"])
+
     def test_php_suite_missing_summary_is_not_a_passing_result(self):
         logs = self.directory / "build-logs"
         logs.mkdir()

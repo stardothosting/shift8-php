@@ -238,10 +238,13 @@ Native read-only discovery has been exercised on Ubuntu 24.04 with PHP 8.3.
 GitHub Actions defines additional discovery jobs for AlmaLinux 8/9, Debian 12
 and Ubuntu 24.04. Those jobs are not evidence of a tested package replacement.
 
-The main unfinished work is a real CentOS 7/Remi build using the complete reviewed
-patch set, followed by binary and extension tests, FPM/application checks, package
-transaction previews, installation, backups and rollback. Automatic patch
-adaptation, development-package swaps and private package signing are also not
+Parallel Remi PHP 8.3.36 RPMs have been produced on CentOS 7.9 with the reviewed
+EL7 compatibility changes. Provider-tolerated PHP test failures are reported
+separately; RPM production does not establish a clean test pass. The build guide
+includes a read-only native transaction check and an isolated runtime smoke.
+Production application/pool checks, configuration backups, recovery packages and
+rollback still require separate work before installation. Unreviewed automatic
+patch adaptation, development-package swaps and private package signing are not
 implemented.
 
 Contribution and disclosure notes are in [CONTRIBUTING.md](CONTRIBUTING.md) and
