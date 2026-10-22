@@ -98,6 +98,138 @@ class ProductionFixture(TemporaryTest):
 
 
 class ProductionTests(ProductionFixture):
+    def el7_inputs(self):
+        data = self.snapshot(family_source="php83-php", runtime_version="8.3.8", branch="8.3")
+        directory, path, profile = self.prepare_build(data=data, target_version="8.3.36", branch="8.3")
+        spec = next(item for item in profile["inputs"] if item["role"] == "spec")
+        pathlib.Path(spec["path"]).write_text(
+            "Name: %{?scl_prefix}php\nVersion: 8.3.36\n"
+            "%bcond_with           iodbc\n"
+            "Patch49: php-8.2.0-iodbc.patch\n"
+            "BuildRequires: pkgconfig(icu-i18n) >= 74\n"
+            "BuildRequires: pkgconfig(icu-io)   >= 74\n"
+            "BuildRequires: pkgconfig(icu-uc)   >= 74\n"
+            "%prep\n%patch -P49 -p1 -b .iodbc\n%build\n"
+        )
+        spec["sha256"] = metadata.digest(spec["path"])
+        metadata.dump(profile, path)
+        return directory, path, profile
+
+    def test_el7_recipe_preserves_originals_and_pins_final_patch(self):
+        directory, path, _ = self.el7_inputs()
+        original_profile = metadata.read(path)
+        output = self.directory / "el7"
+        build.el7_profile(str(path), str(directory), str(output))
+        data = build.profile(str(output / "profile.json"), metadata.load(directory / "discovery.json"),
+                             metadata.load(directory / "release.json"))
+        spec = next(item for item in data["inputs"] if item["role"] == "spec")
+        self.assertIn("%bcond_without        iodbc", metadata.read(spec["path"]))
+        self.assertIn("%if 0%{?rhel} == 7\nBuildRequires: pkgconfig(icu-i18n) >= 73", metadata.read(spec["path"]))
+        self.assertIn("%patch -P49 -p1 -b .iodbc\n%patch -P9999", metadata.read(spec["path"]))
+        self.assertIn("%bcond_with           iodbc", metadata.read(spec["original"]["path"]))
+        patch = data["inputs"][-1]
+        self.assertEqual(patch["sha256"], metadata.digest(ROOT / "patches/php83-el7.patch"))
+        self.assertEqual(metadata.read(path), original_profile)
+        with self.assertRaises(OSError):
+            build.el7_profile(str(path), str(directory), str(output))
+
+    def test_el7_recipe_rejects_changed_context_before_writing(self):
+        directory, path, data = self.el7_inputs()
+        spec = next(item for item in data["inputs"] if item["role"] == "spec")
+        pathlib.Path(spec["path"]).write_text(metadata.read(spec["path"]).replace(">= 74", ">= 75"))
+        spec["sha256"] = metadata.digest(spec["path"])
+        metadata.dump(data, path)
+        output = self.directory / "el7"
+        with self.assertRaisesRegex(ValueError, "does not match exactly once"):
+            build.el7_profile(str(path), str(directory), str(output))
+        self.assertFalse(output.exists())
+
+    def test_el7_recipe_rejects_other_family(self):
+        directory, path, _ = self.prepare_build()
+        with self.assertRaisesRegex(ValueError, "parallel Remi PHP 8.3"):
+            build.el7_profile(str(path), str(directory), str(self.directory / "el7"))
+
+    def test_profile_packaging_does_not_need_historical_srpm(self):
+        directory, path, profile = self.prepare_build()
+        build.packaging(str(path), str(directory))
+        packaged = directory / "sources/packaging"
+        for item in profile["inputs"]:
+            self.assertEqual(metadata.digest(packaged / item["name"]), item["sha256"])
+        self.assertEqual((directory / "sources/packaging-trust").read_text().strip(),
+                         "operator-reviewed-build-profile")
+        self.assertFalse((directory / "source-discovery").exists())
+
+    def test_profile_packaging_rejects_changed_inputs(self):
+        directory, path, profile = self.prepare_build()
+        pathlib.Path(profile["inputs"][0]["path"]).write_text("changed")
+        with self.assertRaisesRegex(ValueError, "Reviewed input changed"):
+            build.packaging(str(path), str(directory))
+        self.assertFalse((directory / "sources/packaging-trust").exists())
+
+    def test_source_acquisition_uses_profile_without_historical_downloads(self):
+        directory, path, _ = self.prepare_build()
+        output = self.directory / "profile-sources"
+        output.mkdir()
+        for name in ("discovery.json", "release.json"):
+            (output / name).write_bytes((directory / name).read_bytes())
+        cache = self.directory / "cache"
+        cache.mkdir()
+        (cache / "php-8.2.35.tar.xz").write_bytes(b"source routing fixture")
+        (cache / "php-8.2.35.tar.xz.receipt.json").write_text("{}")
+        environment = dict(os.environ, BASE_DIR=str(ROOT), BUILD_PROFILE=str(path),
+                           BUILD_DIR=str(output), WORK=str(directory), SOURCE_MAP="",
+                           ARTIFACT_DIR=str(self.directory))
+        command = '''
+set -Eeuo pipefail
+source "$BASE_DIR/lib/common.sh"
+source "$BASE_DIR/lib/build-rpm.sh"
+source "$BASE_DIR/lib/sources.sh"
+meta() {
+    if [[ $1 == archive ]]; then return 0; fi
+    python3 "$BASE_DIR/lib/metadata.py" "$@"
+}
+fetch() { return 0; }
+acquire_srpm() { echo "unexpected historical download" >&2; exit 91; }
+acquire_sources
+'''
+        result = subprocess.run(["bash", "-c", command], env=environment, text=True, capture_output=True)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual((output / "sources/packaging-trust").read_text().strip(),
+                         "operator-reviewed-build-profile")
+
+    def test_profile_rejects_reserved_input_names(self):
+        directory, path, data = self.prepare_build()
+        data["inputs"][0]["name"] = "profile.json"
+        metadata.dump(data, path)
+        with self.assertRaisesRegex(ValueError, "Duplicate input"):
+            build.profile(str(path), metadata.load(directory / "discovery.json"),
+                          metadata.load(directory / "release.json"))
+
+    def test_php_suite_failures_are_visible_even_if_rpmbuild_returns_zero(self):
+        logs = self.directory / "build-logs"
+        logs.mkdir()
+        (logs / "compile.stderr").write_text("")
+        (logs / "compile.stdout").write_text(
+            "Tests failed    :     3 (0.0%)\n"
+            "FAILED TEST SUMMARY\n-----\nOpenSSL error test [openssl.phpt]\n=====\n"
+        )
+        build.test_report(str(self.directory))
+        report = metadata.load(self.directory / "php-tests.json")
+        self.assertEqual(report["status"], "failed")
+        self.assertEqual(report["failed_counts"], [3])
+        self.assertEqual(report["failures"], ["OpenSSL error test [openssl.phpt]"])
+        self.assertFalse(report["deployable"])
+
+    def test_php_suite_missing_summary_is_not_a_passing_result(self):
+        logs = self.directory / "build-logs"
+        logs.mkdir()
+        (logs / "compile.stderr").write_text("")
+        for text, expected in (("", "not-reported"), ("Tests failed : 0\n", "passed"),
+                               ("Tests failed : 2\nTests failed : 0\n", "failed")):
+            (logs / "compile.stdout").write_text(text)
+            build.test_report(str(self.directory))
+            self.assertEqual(metadata.load(self.directory / "php-tests.json")["status"], expected)
+
     def test_pinned_resume_rejects_symlinks_and_shared_files(self):
         path = self.directory / "partial"
         target = self.write("target", "source")

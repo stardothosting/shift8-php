@@ -119,6 +119,7 @@ build_rpm() {
     build_phase compile mock "${mock_options[@]}" --chroot -- "${compiler_environment[@]}" \
         rpmbuild -ba --define '_topdir /builddir/build' --define '__patch /usr/bin/patch --fuzz=0' \
         --define "_smp_mflags -j$jobs" "/builddir/build/SOURCES/$spec"
+    build_meta tests "$BUILD_DIR"
     build_phase regenerate-source mock "${mock_options[@]}" --chroot -- "${compiler_environment[@]}" \
         rpmbuild -bs --define '_topdir /builddir/build' "/builddir/build/SOURCES/$spec"
     build_phase collect-binary mock "${mock_options[@]}" --copyout /builddir/build/RPMS "$BUILD_DIR/packages-binary"

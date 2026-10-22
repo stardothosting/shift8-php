@@ -12,7 +12,13 @@ acquire_sources() {
     cp "$archive" "$BUILD_DIR/sources/php-$version.tar.xz"
     cp "$archive.receipt.json" "$BUILD_DIR/sources/php-$version.tar.xz.receipt.json"
     manager=$(meta get "$WORK/discovery.json" package_manager)
-    if [[ -n $SOURCE_MAP ]]; then
+    if [[ -n ${BUILD_PROFILE:-} ]]; then
+        build_meta packaging "$BUILD_PROFILE" "$BUILD_DIR"
+        log "Using checksum-pinned final packaging from the reviewed build profile; historical source discovery is unnecessary."
+        if [[ -n $SOURCE_MAP ]]; then
+            log "The complete build profile takes precedence over --source-map for this isolated build."
+        fi
+    elif [[ -n $SOURCE_MAP ]]; then
         acquire_map
     elif [[ $manager == rpm ]]; then
         acquire_srpm

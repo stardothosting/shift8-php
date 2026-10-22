@@ -75,7 +75,7 @@ def profile(path, discovery, release):
     for item in inputs:
         pinned(item)
         name = meta.filename(item["name"])
-        if name in names or name == "php-{}.tar.xz".format(release["version"]):
+        if name in names or name in ("profile.json", "audit.json", "originals") or name == "php-{}.tar.xz".format(release["version"]):
             raise ValueError("Duplicate input or attempted replacement of authenticated upstream archive: " + name)
         names.add(name)
         if item["role"] not in ("spec", "source", "patch"):
@@ -118,6 +118,86 @@ def stage(profile_path, directory):
         authentication="Operator-reviewed local packaging, not vendor-authenticated build output",
     ), os.path.join(target, "audit.json"))
     return data
+
+
+def packaging(profile_path, directory):
+    data = profile(profile_path, meta.load(os.path.join(directory, "discovery.json")),
+                   meta.load(os.path.join(directory, "release.json")))
+    target = os.path.join(directory, "sources", "packaging")
+    os.mkdir(target, 0o700)
+    shutil.copyfile(profile_path, os.path.join(target, "profile.json"))
+    for item in data["inputs"]:
+        shutil.copyfile(item["path"], os.path.join(target, item["name"]))
+    with open(os.path.join(directory, "sources", "packaging-trust"), "w") as stream:
+        stream.write("operator-reviewed-build-profile\n")
+
+
+def el7_profile(profile_path, directory, destination):
+    discovery = meta.load(os.path.join(directory, "discovery.json"))
+    release = meta.load(os.path.join(directory, "release.json"))
+    data = profile(profile_path, discovery, release)
+    if discovery["family"]["source_name"] != "php83-php" or release["branch"] != "8.3":
+        raise ValueError("The EL7 compatibility recipe supports only parallel Remi PHP 8.3")
+    spec = next(item for item in data["inputs"] if item["role"] == "spec")
+    text = meta.read(spec["path"])
+    replacements = [
+        ("%bcond_with           iodbc", "%bcond_without        iodbc"),
+        ("BuildRequires: pkgconfig(icu-i18n) >= 74\n"
+         "BuildRequires: pkgconfig(icu-io)   >= 74\n"
+         "BuildRequires: pkgconfig(icu-uc)   >= 74\n",
+         "%if 0%{?rhel} == 7\n"
+         "BuildRequires: pkgconfig(icu-i18n) >= 73\n"
+         "BuildRequires: pkgconfig(icu-io)   >= 73\n"
+         "BuildRequires: pkgconfig(icu-uc)   >= 73\n%else\n"
+         "BuildRequires: pkgconfig(icu-i18n) >= 74\n"
+         "BuildRequires: pkgconfig(icu-io)   >= 74\n"
+         "BuildRequires: pkgconfig(icu-uc)   >= 74\n%endif\n"),
+        ("Patch49: php-8.2.0-iodbc.patch\n",
+         "Patch49: php-8.2.0-iodbc.patch\nPatch9999: shift8-php83-el7.patch\n"),
+        ("%patch -P49 -p1 -b .iodbc\n",
+         "%patch -P49 -p1 -b .iodbc\n%patch -P9999 -p1 -b .shift8-el7\n"),
+    ]
+    if re.search(r"(?m)^Patch9999:", text) or any(item["name"] == "shift8-php83-el7.patch" for item in data["inputs"]):
+        raise ValueError("EL7 compatibility patch is already present or its name/number is in use")
+    for old, new in replacements:
+        if text.count(old) != 1:
+            raise ValueError("EL7 spec recipe does not match exactly once; review changed provider packaging: " + old.splitlines()[0])
+        text = text.replace(old, new, 1)
+    destination = os.path.abspath(destination)
+    os.mkdir(destination, 0o700)
+    originals = os.path.join(destination, "originals")
+    os.mkdir(originals, 0o700)
+    for item in data["inputs"]:
+        target = os.path.join(destination, item["name"])
+        shutil.copyfile(item["path"], target)
+        if item is spec:
+            original = os.path.join(originals, item["name"])
+            shutil.copyfile(item["path"], original)
+            item["original"] = dict(path=original, sha256=item["sha256"])
+            with open(target, "w") as stream:
+                stream.write(text)
+            item["review"] = (
+                "EL7 recipe: iODBC default (do not deploy ODBC replacement without application review); "
+                "ICU 73 floor only on EL7; explicit zero-fuzz FFI/OpenSSL compatibility patch; "
+                "vendor patches and tests retained. Built RPMs still require runtime validation."
+            )
+        elif "original" in item:
+            original = os.path.join(originals, item["name"])
+            shutil.copyfile(item["original"]["path"], original)
+            item["original"]["path"] = original
+        item.update(path=target, sha256=meta.digest(target))
+    patch = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "patches", "php83-el7.patch")
+    target = os.path.join(destination, "shift8-php83-el7.patch")
+    shutil.copyfile(patch, target)
+    data["inputs"].append(dict(
+        name="shift8-php83-el7.patch", role="patch", path=target, sha256=meta.digest(target),
+        review="Explicit strncmp lengths preserve ZEND_STRL semantics under EL7 fortify; "
+               "OpenSSL <1.1 accessor borrows const ASN1 data, with no allocation/free or verification bypass.",
+    ))
+    path = os.path.join(destination, "profile.json")
+    meta.dump(data, path)
+    profile(path, discovery, release)
+    print(path)
 
 
 def validate_staged(directory):
@@ -192,6 +272,23 @@ def failure(directory, phase, code):
     print("[shift8-php] Failure classification: " + classification, file=sys.stderr)
 
 
+def test_report(directory):
+    logs = os.path.join(directory, "build-logs")
+    summaries, failures = [], []
+    for name in ("compile.stdout", "compile.stderr"):
+        text = meta.read(os.path.join(logs, name))
+        summaries.extend(int(value) for value in re.findall(r"(?m)^Tests failed\s*:\s*(\d+)", text))
+        for match in re.finditer(r"(?m)^FAILED TEST SUMMARY\s*\n-+\s*\n(.*?)(?=^=+|\Z)", text, re.DOTALL):
+            failures.extend(line.strip() for line in match.group(1).splitlines() if line.strip())
+    status = "failed" if any(summaries) or failures else ("passed" if summaries else "not-reported")
+    meta.dump(dict(status=status, failed_counts=summaries, failures=sorted(set(failures)),
+                   deployable=False, policy="RPM build success is not evidence that PHP tests passed."),
+              os.path.join(directory, "php-tests.json"))
+    if status != "passed":
+        print("[shift8-php] WARNING: PHP tests {}; inspect php-tests.json and native logs. "
+              "Do not install these artifacts on production.".format(status), file=sys.stderr)
+
+
 def artifact_report(directory):
     discovery = meta.load(os.path.join(directory, "discovery.json"))
     release = meta.load(os.path.join(directory, "release.json"))
@@ -253,6 +350,7 @@ def artifact_report(directory):
         retained_extensions=[item["name"] for item in discovery["family"]["packages"] if item["role"] != "core"],
         source_package=sources[0], deployable=False,
         runtime_compatibility="not-validated; extension load/FPM/application checks remain mandatory",
+        php_tests=meta.load(os.path.join(directory, "php-tests.json")) if os.path.exists(os.path.join(directory, "php-tests.json")) else dict(status="not-reported"),
     ), os.path.join(directory, "artifacts.json"))
 
 
@@ -262,6 +360,10 @@ def main(args):
         profile(args[0], meta.load(args[1]), meta.load(args[2]))
     elif command == "stage":
         stage(*args)
+    elif command == "packaging":
+        packaging(*args)
+    elif command == "el7-profile":
+        el7_profile(*args)
     elif command == "check-inputs":
         validate_staged(*args)
     elif command == "spec":
@@ -270,6 +372,8 @@ def main(args):
         compiler_report(*args)
     elif command == "artifacts":
         artifact_report(*args)
+    elif command == "tests":
+        test_report(*args)
     elif command == "failure":
         failure(*args)
     elif command == "input-id":

@@ -66,11 +66,12 @@ installation, supply its own CLI package:
 Discovery and preparation do not update either installation. The build driver
 currently supports CentOS 7 with reviewed profiles for standard Remi PHP 8.2
 and parallel Remi `php83-php` 8.3. It still requires an existing mock
-environment and a reviewed set of final packaging files. No ready-to-use CentOS
-7 profile or finalized compatibility patches are included.
+environment and a reviewed set of final packaging files. A bounded PHP 8.3
+EL7 compatibility recipe is included; there is no universal ready-to-use
+CentOS 7 profile. A successful build is not approval to install on production.
 
 See [Building Remi RPMs with mock](docs/mock-builds.md) for the profile format,
-dependency queries, compiler setup, patch checks and build logs.
+EL7 recipe, isolated dependency resolution, compiler setup and patch checks.
 
 ## Requirements
 
@@ -137,6 +138,10 @@ If neither the original SRPM nor a bounded provider packaging tag is available,
 `--source-map` accepts a reviewed list of HTTPS URLs and independently verified
 hashes. It is an explicit alternative, not automatic archive or full Git
 history discovery.
+When `--build-profile` supplies a complete, reviewed final packaging set, those
+pinned inputs are used directly instead of retrieving historical packaging.
+They can come from reviewed current-target provider packaging; this does not
+turn an unverifiable provider SRPM into a signature-verified one.
 A map has this form:
 
 ```json

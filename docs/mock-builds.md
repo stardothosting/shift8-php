@@ -2,9 +2,9 @@
 
 This is an **experimental build driver**, not certification that PHP 8.2.35 or
 any future release is production-safe on EL7. Its orchestration is regression
-tested with a mock-command fixture. A real historical Remi spec/patch closure and
-operator-configured mock root must still be exercised before claiming a reliable
-EL7 production build.
+tested with a mock-command fixture. A parallel Remi PHP 8.3.36 build has also
+completed on CentOS 7.9 using reviewed current packaging and EL7 compatibility
+changes. Compilation alone does not validate a production upgrade.
 
 ## Responsibilities and adapter boundaries
 
@@ -27,8 +27,11 @@ EL7 production build.
   errors are retained under `source-discovery`; empty results are not labelled
   network failures. Yum uses its supported `logfile` setting, while DNF uses
   `logdir`.
-- The build adapter accepts explicitly reviewed final packaging. It does not
-  rewrite spec text based on guessed `%patch47` syntax. Native `rpmspec` inside
+- The build adapter accepts explicitly reviewed final packaging. When a build
+  profile is supplied, its pinned final inputs are the packaging source; there
+  is no separate historical SRPM/tag download requirement. A simultaneous
+  `--source-map` is not used for that build and a diagnostic explains precedence.
+  The adapter does not rewrite spec text based on guessed `%patch47` syntax. Native `rpmspec` inside
   mock expands the actual target RPM macros; the expanded `%prep` script records
   the application order for `%autosetup`, `%autopatch`, `%patch` or numbered
   declarations as supported by that root's RPM version. Unsupported macros fail.
@@ -142,9 +145,54 @@ necessarily used by every subordinate build.
   --artifact-dir="$HOME/shift8-php-artifacts"
 ```
 
-If original packaging is no longer retrievable, also supply a reviewed
-`--source-map`. That is an explicit alternative to SRPM retrieval, not a claim of
-vendor authentication. No remote build script is executed on the host.
+The profile supplies the complete final packaging, even when the old installed
+SRPM is no longer retrievable. For source-only preparation without a profile,
+`--source-map` remains an alternative to SRPM retrieval. Reviewed packaging is
+not a claim of vendor signature authentication. No downloaded build script is
+executed on the host.
+
+### Parallel PHP 8.3 compatibility recipe
+
+`lib/build_metadata.py el7-profile` turns an existing reviewed **current-target**
+profile into a separate, pinned EL7 profile. It requires a prepared build's
+discovery/release metadata, matching profile pins, and a new output directory.
+It neither downloads a guessed source RPM nor bypasses an unverifiable signature.
+Review the provider packaging and repository patch before running this helper:
+
+```sh
+python3 lib/build_metadata.py el7-profile \
+  /absolute/reviewed/current-profile.json \
+  /absolute/prepared/build-directory \
+  /absolute/new/el7-inputs
+# Inspect el7-inputs/profile.json, the final spec and preserved originals.
+./shift8-php prepare php83-php-cli \
+  --build-profile=/absolute/new/el7-inputs/profile.json \
+  --artifact-dir=/var/lib/shift8-php
+```
+
+The recipe is limited to parallel Remi PHP 8.3 on CentOS 7. It stops if expected
+spec contexts drift, appear twice, or the patch name/number is already used.
+All existing patch inputs are retained; the final spec and compatibility patch
+are checksum-pinned, and the original spec is preserved separately.
+
+- Uses iODBC instead of requesting EL7's missing `pkgconfig(odbc)` capability.
+  This changes the optional ODBC build, not an application compatibility promise.
+  Do not install that extra RPM, especially over an existing ODBC installation,
+  without separate driver/application testing.
+- Uses ICU 73 on EL7, as available from Remi, while retaining ICU 74 requirements
+  elsewhere. PHP's intl behavior must be exercised against the resolved library.
+- Applies [the source patch](../patches/php83-el7.patch) with zero fuzz after
+  the provider's patch 49. Explicit `strncmp` lengths preserve `ZEND_STRL`
+  semantics with EL7 fortify macros. The OpenSSL <1.1 fallback borrows the ASN1
+  string's data as const without changing certificate-verification logic.
+- Does not disable fortification, skip the test suite, drop provider patches,
+  install host libraries or increase build parallelism.
+
+The helper inherits the base profile's review attestations. It is not an
+automatic review: inspect the generated files before building, and repeat the
+review when upstream packaging or source changes. A future PHP patch release
+still has to pass native spec identity, dependency resolution, zero-fuzz patch
+application, the build/test phases and runtime validation.
 
 Builds are gated to **CentOS 7 with reviewed Remi PHP profiles**. Supported
 families in this release are standard Remi PHP 8.2 and parallel Remi
@@ -163,11 +211,9 @@ accidental reuse of stale output.
    check the reviewed GCC/G++ versions.
 3. Stage inputs, use native RPM spec expansion, and check exact package family
    and target version. Read native BuildRequires rather than guessing devel names.
-4. Query capabilities such as `pkgconfig(oniguruma)`, `pkgconfig(gdlib)` and
-   `pkgconfig(icu-uc)` across configured enabled and disabled repositories with
-   operation-local enabling, private caches and bounded network settings.
-   Record provider and installed reverse-dependency output. Repository query
-   failure is isolated; mock's dependency solver is authoritative for its root.
+4. Read capabilities such as `pkgconfig(oniguruma)`, `pkgconfig(gdlib)` and
+   `pkgconfig(icu-uc)` from the expanded spec. Skip the host dependency repository
+   sweep: mock's dependency solver is authoritative for its isolated root.
 5. Generate a source package from the **final reviewed** spec/patch set, then ask
    mock to resolve dependencies from that SRPM. A missing compiler or conflicting
    `gd-devel`/`gd3php-devel`, `libicu-devel`/`libicu73-devel`, or reverse-dependent
@@ -202,6 +248,14 @@ space. Native logs, expanded spec, BuildRequires, installed buildroot packages,
 profile/input audit, compiler facts and artifact hashes are part of the manifest.
 Failures distinguish dependencies, `%prep`, compilation/spec phases, RPM packaging
 and explicit `%check` failure markers. Full logs remain the authoritative evidence.
+
+Some provider specs deliberately tolerate `make test` failures. The driver
+therefore records PHP test summaries separately in `php-tests.json` and in the
+artifact report. Any nonzero failed count is recorded as `failed`, even if the
+RPM command exits zero; absent summaries are `not-reported`, never a passing
+test result. Both conditions emit a warning and leave deployment blocked. RPM
+production can complete for investigation, but must not be described as a clean
+test pass.
 
 On failure, no success manifest is written. `failure.json`, `build-state`,
 `mock-root-id` and original patches remain for inspection. The failed mock root
