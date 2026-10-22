@@ -13,6 +13,7 @@ sys.path.insert(0, os.path.join(ROOT, "lib"))
 import metadata
 import build_metadata
 import build_environment
+import source_metadata
 
 
 class LegacyRuntimeTests(unittest.TestCase):
@@ -58,6 +59,12 @@ class LegacyRuntimeTests(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertIn("SHIFT8_BUILD_ENVIRONMENT", result.stdout)
         self.assertIn("legacy environment child", result.stdout)
+
+    def test_source_contract_helpers_work_with_python27(self):
+        self.assertEqual(source_metadata.absolute("/opt/remi/php83/root/usr/bin/php"),
+                         "/opt/remi/php83/root/usr/bin/php")
+        self.assertEqual(source_metadata.module_name("Zend OPcache"), "opcache")
+        self.assertEqual(len(source_metadata.identity(dict(target="8.3.36"))), 64)
 
     def test_source_index_routing_and_html_parser(self):
         source = "php83-php-8.3.8-1.el7.remi.src.rpm"

@@ -20,13 +20,14 @@ usage() {
     cat <<'EOF'
 shift8-php - read-only PHP package discovery and authenticated source preparation
 
-Usage: shift8-php <discover|prepare|check> <installed-package> [options]
+Usage: shift8-php <discover|plan|prepare|check> <installed-package> [options]
        shift8-php <deploy|rollback> <installed-package>
 
 Options:
   --target=X.Y.Z          Select an officially published release in the same branch
   --artifact-dir=PATH     Private artifact store (default: /var/lib/shift8-php)
   --source-only          Retrieve sources even when a repository candidate exists
+  --source-first         Plan from the installed contract; prepare only upstream PHP
   --source-map=PATH       Reviewed, checksum-pinned packaging file map
   --source-keyring=PATH   Trusted keyring for Debian source signatures
   --build-profile=PATH    Explicitly reviewed isolated mock build profile (EL7 Remi)
@@ -48,7 +49,7 @@ COMMAND=${1:-}
 [[ $# -eq 0 ]] || shift
 PACKAGE='' TARGET='' SOURCE_MAP='' SOURCE_KEYRING='' BUILD_PROFILE='' MANIFEST=''
 ARTIFACT_DIR=/var/lib/shift8-php
-DRY_RUN=0 OFFLINE=0 IPV4=0 VERBOSE=0 SOURCE_ONLY=0
+DRY_RUN=0 OFFLINE=0 IPV4=0 VERBOSE=0 SOURCE_ONLY=0 SOURCE_FIRST=0
 WORK='' LOG_FILE='' OPERATION=initialization BUILD_PID=''
 trap cleanup EXIT
 trap 'failed "$?" "$LINENO"' ERR
@@ -60,7 +61,7 @@ case "$COMMAND" in
         usage
         exit 0
         ;;
-    discover | prepare | check | deploy | rollback) ;;
+    discover | plan | prepare | check | deploy | rollback) ;;
     *) die 2 "Unknown command: $COMMAND" ;;
 esac
 for argument in "$@"; do
@@ -92,6 +93,7 @@ for argument in "$@"; do
         --ipv4) IPV4=1 ;;
         --verbose) VERBOSE=1 ;;
         --source-only) SOURCE_ONLY=1 ;;
+        --source-first) SOURCE_FIRST=1 SOURCE_ONLY=1 ;;
         --yes) ;;
         --rollback) COMMAND=rollback ;;
         --build-only | --force-rebuild | --allow-prerelease)
@@ -114,6 +116,13 @@ if [[ $COMMAND == deploy || $COMMAND == rollback ]]; then
 fi
 [[ -z $TARGET || $TARGET =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || die 2 "Target must be a stable X.Y.Z version."
 [[ -n $ARTIFACT_DIR ]] || die 2 "Artifact directory must not be empty."
+if [[ $COMMAND == plan ]]; then SOURCE_FIRST=1 DRY_RUN=1; fi
+if ((SOURCE_FIRST)); then
+    [[ $COMMAND == plan || $COMMAND == discover || $COMMAND == prepare ]] ||
+        die 2 "--source-first is only valid with discover, plan or prepare."
+    [[ -z $BUILD_PROFILE && -z $SOURCE_MAP && -z $SOURCE_KEYRING ]] ||
+        die 2 "--source-first does not accept historical packaging maps/keyrings or vendor build profiles."
+fi
 for dependency in mktemp tar; do
     require "$dependency"
 done
@@ -161,6 +170,30 @@ fi
 if ((!OFFLINE)); then require curl; fi
 OPERATION='release-selection'
 select_release
+if ((SOURCE_FIRST)); then
+    source_meta plan "$WORK/discovery.json" "$WORK/release.json" >"$WORK/source-plan.json"
+    if [[ $COMMAND == plan ]] || ((DRY_RUN)); then
+        cat "$WORK/source-plan.json"
+        log "Source-first contract only: no historical packaging queries, compilation or deployment. Inspect blockers and required_checks."
+        exit 0
+    fi
+    BUILD_ID=$(meta build-id "$WORK/discovery.json" "$WORK/release.json")
+    BUILD_DIR=$(mktemp -d "$ARTIFACT_DIR/builds/$BUILD_ID.XXXXXXXX")
+    cp "$WORK/discovery.json" "$WORK/release.json" "$WORK/source-plan.json" "$BUILD_DIR/"
+    cp "$WORK/support.json" "$WORK/releases.json" "$WORK/support.json.receipt.json" \
+        "$WORK/releases.json.receipt.json" "$BUILD_DIR/"
+    printf '%s\n' '{"candidates":[],"preferred_route":"source-first","queried":false}' >"$BUILD_DIR/repositories.json"
+    cp "$LOG_FILE" "$BUILD_DIR/preparation.log"
+    LOG_FILE=$BUILD_DIR/preparation.log
+    acquire_upstream
+    printf '%s\n' upstream-only-installed-contract-not-vendor-packaging >"$BUILD_DIR/sources/packaging-trust"
+    meta manifest "$BUILD_DIR" source-preparation
+    meta verify-manifest "$BUILD_DIR/manifest.json"
+    log "Authenticated upstream source and installed contract prepared. No build or replacement was performed."
+    log "Source-first builder, private dependency resolution and deployment are not implemented; inspect source-plan.json."
+    printf '%s\n' "$BUILD_DIR/manifest.json"
+    exit 0
+fi
 if [[ -n $BUILD_PROFILE ]]; then
     build_meta validate "$BUILD_PROFILE" "$WORK/discovery.json" "$WORK/release.json"
 fi

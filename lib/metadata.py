@@ -238,6 +238,9 @@ def phpinfo(text):
         "Loaded Configuration File", "Scan this dir for additional .ini files",
         "Additional .ini files parsed", "Server API", "PHP Extension Build",
         "Zend Extension Build", "Configuration File (php.ini) Path",
+        "OpenSSL Library Version", "OpenSSL Header Version",
+        "libXML Compiled Version", "libXML Loaded Version", "ICU version",
+        "cURL Information", "SQLite Library", "libzip version",
     }
     result = {}
     for line in text.splitlines():
@@ -286,7 +289,9 @@ def distribution(root="/"):
     raise ValueError("Linux distribution cannot be established from local release metadata")
 
 
-def snapshot(directory, requested):
+def snapshot(directory, requested, mode="strict"):
+    if mode not in ("strict", "source-first"):
+        raise ValueError("Unknown discovery mode: " + mode)
     directory = str(directory)
     data = load(os.path.join(directory, "inventory.json"))
     info = load(os.path.join(directory, "phpinfo.json"))
@@ -294,7 +299,8 @@ def snapshot(directory, requested):
     runtime_version = upstream_version(info["PHP Version"])
     core = data["core"]
     cli = next(item for item in core if item["name"] == owner)
-    if upstream_version(cli["version"]) != runtime_version:
+    drift = upstream_version(cli["version"]) != runtime_version
+    if drift and mode != "source-first":
         raise ValueError("Package version does not match its runtime; repair installation before preparation")
     extension_dir = info["extension_dir"]
     if not os.path.isabs(extension_dir):
@@ -337,15 +343,20 @@ def snapshot(directory, requested):
         "PHP info output is allow-listed; environment and application secrets are not stored.",
         "Unpackaged or externally located extensions require operator review before future deployment.",
     ]
+    if drift:
+        warnings.append("RPM/runtime version drift: source-first planning uses the running PHP version; managed replacement and recovery require reconciliation.")
     if len({item["source_reference"] for item in core}) > 1:
         warnings.append("Installed core packages have different source revisions; build drift requires review.")
     fpm = sorted({
         path for item in family for path in item["files"]
         if re.match(r"php-fpm(?:\d+\.\d+)?\Z", os.path.basename(path)) and "/sbin/" in path
     })
-    return dict(
+    platform = distribution()
+    if mode == "source-first" and os.path.isfile("/etc/centos-release"):
+        platform["point_release_evidence"] = read("/etc/centos-release").strip()
+    result = dict(
         schema_version=1, requested_package=requested, package_manager=data["manager"],
-        distribution=distribution(), architecture=cli["architecture"],
+        distribution=platform, architecture=cli["architecture"],
         runtime=dict(
             owner=owner, executable=executable, version=runtime_version,
             branch=".".join(runtime_version.split(".")[:2]),
@@ -367,6 +378,13 @@ def snapshot(directory, requested):
         ),
         warnings=warnings,
     )
+    if mode == "source-first":
+        result["installation_state"] = dict(
+            package_runtime_drift=drift, package_version=cli["version"],
+            runtime_version=runtime_version, evidence="RPM inventory and package-owned executable",
+            reconciled=False if drift else True,
+        )
+    return result
 
 
 def memory_kib():
@@ -993,6 +1011,9 @@ def manifest(directory, kind):
             ),
         ],
     )
+    source_plan = os.path.join(directory, "source-plan.json")
+    if os.path.isfile(source_plan):
+        result["source_contract"] = load(source_plan)
     dump(result, os.path.join(directory, "manifest.json"))
 
 
@@ -1026,6 +1047,10 @@ def verify_manifest(path):
     if data["kind"] == "isolated-rpm-build":
         if "artifacts.json" not in seen or data["build"] != load(os.path.join(root, "artifacts.json")):
             raise ValueError("Build artifact selection differs from the verified manifest")
+    if "source_contract" in data and (
+        "source-plan.json" not in seen or data["source_contract"] != load(os.path.join(root, "source-plan.json"))
+    ):
+        raise ValueError("Source contract differs from its verified manifest entry")
 
 
 def main(arguments):

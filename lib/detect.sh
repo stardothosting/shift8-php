@@ -45,7 +45,21 @@ discover() {
     "$path" -i 2>>"$LOG_FILE" | meta phpinfo >"$WORK/phpinfo.json"
     capture "$WORK/modules.txt" "$path" -m
     capture "$WORK/ini.txt" "$path" --ini
-    meta snapshot "$WORK" "$PACKAGE" >"$WORK/discovery.json"
+    if (( ${SOURCE_FIRST:-0} )); then
+        meta snapshot "$WORK" "$PACKAGE" source-first >"$WORK/discovery.json"
+        mkdir "$WORK/fpm-details"
+        meta get "$WORK/discovery.json" family.fpm_binaries >"$WORK/fpm-binaries"
+        local index=0
+        while IFS= read -r fpm; do
+            [[ -n $fpm ]] || continue
+            index=$((index + 1))
+            [[ -x $fpm && -f $fpm ]] || die 3 "Package-owned FPM executable is unavailable: $fpm"
+            "$fpm" -i 2>>"$LOG_FILE" | meta phpinfo >"$WORK/fpm-details/$index.json"
+        done <"$WORK/fpm-binaries"
+        source_meta attach-fpm "$WORK/discovery.json" "$WORK/fpm-details"
+    else
+        meta snapshot "$WORK" "$PACKAGE" >"$WORK/discovery.json"
+    fi
     meta libraries "$WORK/discovery.json" >"$WORK/libraries.json"
     meta attach-libraries "$WORK/discovery.json" "$WORK/libraries.json"
     meta get "$WORK/discovery.json" family.names >"$WORK/family-names"

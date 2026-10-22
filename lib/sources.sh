@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 
-acquire_sources() {
-    local version url checksum archive manager
+acquire_upstream() {
+    local version url checksum archive
     version=$(meta get "$WORK/release.json" version)
     url=$(meta get "$WORK/release.json" source.url)
     checksum=$(meta get "$WORK/release.json" source.sha256)
@@ -11,6 +11,11 @@ acquire_sources() {
     mkdir "$BUILD_DIR/sources"
     cp "$archive" "$BUILD_DIR/sources/php-$version.tar.xz"
     cp "$archive.receipt.json" "$BUILD_DIR/sources/php-$version.tar.xz.receipt.json"
+}
+
+acquire_sources() {
+    local manager
+    acquire_upstream
     manager=$(meta get "$WORK/discovery.json" package_manager)
     if [[ -n ${BUILD_PROFILE:-} ]]; then
         build_meta packaging "$BUILD_PROFILE" "$BUILD_DIR"

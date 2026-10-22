@@ -417,7 +417,7 @@ else:
 '''
 
 
-class CommandTests(TemporaryTest):
+class CommandFixture(TemporaryTest):
     def setUp(self):
         super().setUp()
         self.host = self.directory / "host"
@@ -484,6 +484,8 @@ class CommandTests(TemporaryTest):
         path = self.host / "calls"
         return [json.loads(line) for line in path.read_text().splitlines()] if path.exists() else []
 
+
+class CommandTests(CommandFixture):
     def test_discovery_uses_package_binary_and_preserves_all_extensions(self):
         result = self.cli("discover", "php-cli")
         self.assertEqual(result.returncode, 0, result.stderr)

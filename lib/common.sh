@@ -4,6 +4,10 @@ meta() {
     "${METADATA_PYTHON:-python3}" "$BASE_DIR/lib/metadata.py" "$@"
 }
 
+source_meta() {
+    "${METADATA_PYTHON:-python3}" "$BASE_DIR/lib/source_metadata.py" "$@"
+}
+
 select_metadata_python() {
     local candidate
     for candidate in python3 python2.7 python2 python; do

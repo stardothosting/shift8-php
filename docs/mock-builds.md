@@ -1,5 +1,50 @@
 # Isolated CentOS 7 / Remi builds
 
+## Source-first route versus vendor-profile builds
+
+`shift8-php plan` and `prepare --source-first` are a separate route. They use
+installed RPMs as an inventory of paths, configuration and extension ownership,
+not as a requirement to recover/rebuild an old source package. They do not use
+the vendor-spec machinery documented below.
+
+The source-first contract includes:
+
+- The running PHP version for target/downgrade checks, even after a manual
+  file swap left RPM version metadata stale. Drift is an explicit blocker for a
+  managed transaction, not silently repaired or accepted as rollback evidence.
+  The legacy vendor-profile route retains its strict mismatch rejection.
+- System and parallel Remi layout detection with exact CLI, FPM, extension and
+  compiled configuration paths. FPM is inspected separately with `-i`; it is not
+  started. Distinct CLI/FPM versions, ABIs, thread safety or compiled INI paths
+  require a separate adapter/review.
+- Installed core shared modules, loaded features and separately packaged
+  extensions. Feature proposals are data, **not executable configure commands**.
+  The old `Configure Command` is never evaluated or replayed. Unknown/proprietary
+  modules, control-panel paths and Apache module payloads block automatic use.
+- Observed allow-listed library versions and explicit isolated-resolution
+  requirements. Legacy OpenSSL requires a private-source decision. Runtime
+  presence/version alone does not approve library maintenance, headers or ABI.
+  System OpenSSL/libxml replacement is prohibited.
+- A pre-resolution source-contract identity separate from the full host
+  deployment fingerprint. Changing service state or configuration bytes need
+  not require recompilation; they still matter for deployment. The contract
+  hash is **not** a binary cache key: final compiler, dependencies, patch bytes
+  and other resolved build inputs must be part of that key.
+
+`plan` reads the two authoritative PHP release feeds but does not query old Yum
+repositories or download source packages. `prepare --source-first` saves the
+checksum-verified upstream tarball, release receipts, contract, discovery and
+manifest. Blockers are retained in that manifest; preparing sources is not a
+build approval. Profile/map/keyring options from the historical packaging path
+are rejected rather than ignored.
+
+There is no source-first private-dependency builder, generated replacement RPM
+backend or live transaction/rollback executor yet. In particular, the contract
+does not solve mixed OpenSSL consumers by setting a global `LD_LIBRARY_PATH`,
+replace glibc, or claim arbitrary PECL binaries can be retained. Those surfaces
+must use a pinned, tested dependency graph and an actual recovery payload before
+this route can install anything.
+
 This is an **experimental build driver**, not certification that PHP 8.2.35 or
 any future release is production-safe on EL7. Its orchestration is regression
 tested with a mock-command fixture. A parallel Remi PHP 8.3.36 build has also

@@ -1,11 +1,13 @@
 # shift8-php
 
-Inspect packaged PHP installations, find releases in the same PHP branch, and
-prepare sources for rebuilding distribution packages.
+Inspect PHP installations, find releases in the same PHP branch, and prepare
+authenticated source inputs. The new CentOS 7.9 route plans from the installed
+runtime contract rather than recovering historical vendor packaging.
 
 **This tool does not install PHP updates.** Discovery and source preparation
-are implemented. There is an experimental RPM build driver, but no validated
-end-to-end CentOS 7.9 build workflow yet. `deploy` and `rollback` are disabled.
+are implemented, including source-first contracts. There is an experimental
+vendor-profile RPM build driver; a source-first builder and managed deployment
+are not implemented yet. `deploy` and `rollback` are disabled.
 
 The goal is to update PHP without changing its package names, installation paths,
 extensions or service configuration. The current code is a starting point for
@@ -16,7 +18,10 @@ that workflow, not a replacement for a distribution's package updater.
 | Command | Current behavior |
 | --- | --- |
 | `discover <package>` | Inspect the installed package family and its PHP runtime; print JSON. |
+| `discover <package> --source-first` | Also inspect FPM separately and report RPM/runtime version drift without treating stale RPM versions as the running version. |
+| `plan <package>` | Read-only CentOS 7.9 source-first contract, authoritative target, dependency decisions and explicit blockers. No vendor repository/SRPM queries. |
 | `prepare <package>` | Select an upstream release, check repositories and record a candidate update or download source inputs. |
+| `prepare <package> --source-first` | Save the installed contract and authenticated upstream PHP archive, without historical packaging or compilation. |
 | `prepare <package> --build-profile=...` | Attempt an isolated mock build using a supplied, reviewed spec, patches and configuration. |
 | `check <package> --manifest=...` | Verify saved artifact checksums and compare the recorded installation fingerprint with this host. |
 | `deploy <package>` | Not implemented; exits without installing anything. |
@@ -30,6 +35,29 @@ It stops if it cannot resolve a single CLI executable.
 ## Getting started
 
 Run from the checkout; there is no installer.
+
+For the source-first CentOS 7.9 route:
+
+```sh
+./shift8-php plan php83-php-cli
+./shift8-php prepare php83-php-cli --source-first \
+  --artifact-dir="$HOME/shift8-php-artifacts"
+```
+
+Use `php-cli` for the system layout. `plan` prints JSON; exit zero means that
+inspection/plan generation completed, **not** that the installation can be
+updated. Read `status`, `blockers`, `dependencies` and `required_checks`.
+`build_ready` and `deployable` remain false. Unknown layouts, Apache modules,
+unknown extensions, incomplete library inventory and mismatched FPM facts are
+reported instead of silently disabled. An unrecognized system is never claimed
+to be a supported build.
+
+This route does not need a historical SRPM, source map or handwritten final
+spec/profile. It does not yet build private libraries or produce/install
+replacement RPMs. The existing vendor-profile route below remains available;
+it is not selected automatically by source-first planning.
+
+Legacy discovery/preparation:
 
 ```sh
 ./shift8-php discover php-cli
@@ -170,6 +198,7 @@ represented as vendor-signed material.
 | `--artifact-dir=PATH` | Store preparation results outside the default `/var/lib/shift8-php`. |
 | `--dry-run` | Inspect and plan without saving preparation results or building. |
 | `--source-only` | Retrieve sources even when a repository candidate exists. |
+| `--source-first` | Use installed-contract discovery; with `prepare`, retrieve only authenticated upstream PHP and save the contract. Incompatible with vendor profiles/source maps/keyrings. |
 | `--source-map=PATH` | Supply reviewed packaging URLs and SHA-256 values. |
 | `--source-keyring=PATH` | Use a trusted keyring for Debian source signatures. |
 | `--build-profile=PATH` | Opt into the experimental mock build driver with a real local reviewed profile path; omit it for source preparation only. |
