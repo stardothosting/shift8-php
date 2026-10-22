@@ -232,6 +232,8 @@ def binary(data, directory):
 
 
 def phpinfo(text):
+    if isinstance(text, bytes):
+        text = text.decode("utf-8", "replace")
     keys = {
         "PHP Version", "PHP API", "PHP Extension", "Zend Extension",
         "Thread Safety", "Configure Command", "Compiler", "extension_dir",

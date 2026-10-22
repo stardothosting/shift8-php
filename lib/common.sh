@@ -35,7 +35,11 @@ die() {
     local code=$1
     shift
     log "ERROR: $*"
-    log "Installed PHP was not modified; no services were restarted."
+    if (( ${HOST_MUTATION_POSSIBLE:-0} )); then
+        log "A managed transaction was requested; inspect its durable journal before retrying or rolling back. Target PHP/service state may have changed."
+    else
+        log "Installed PHP was not modified; no services were restarted."
+    fi
     if [[ -n ${LOG_FILE:-} && $LOG_FILE != "${WORK:-}/"* ]]; then
         log "Diagnostics: $LOG_FILE"
     fi

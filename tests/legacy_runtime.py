@@ -14,7 +14,10 @@ import metadata
 import build_metadata
 import build_environment
 import source_metadata
-
+import deployment
+import configure_source
+import stage_source
+import source_build
 
 class LegacyRuntimeTests(unittest.TestCase):
     def setUp(self):
@@ -66,6 +69,17 @@ class LegacyRuntimeTests(unittest.TestCase):
         self.assertEqual(source_metadata.module_name("Zend OPcache"), "opcache")
         self.assertEqual(len(source_metadata.identity(dict(target="8.3.36"))), 64)
 
+    def test_phpinfo_ignores_nonascii_application_output_on_python27(self):
+        text = (
+            b"PHP Version => 8.3.8\nPHP API => 20230831\nPHP Extension => 20230831\n"
+            b"Zend Extension => 420230831\nThread Safety => disabled\n"
+            b"extension_dir => /opt/remi/php83/root/usr/lib64/php/modules\n"
+            b"APP_VALUE => caf\xc3\xa9\n"
+        )
+        result = metadata.phpinfo(text)
+        self.assertEqual(result["PHP Version"], "8.3.8")
+        self.assertNotIn("APP_VALUE", result)
+
     def test_source_index_routing_and_html_parser(self):
         source = "php83-php-8.3.8-1.el7.remi.src.rpm"
         data = dict(family=dict(source_reference=source, source_name="php83-php", packages=[]))
@@ -79,6 +93,32 @@ class LegacyRuntimeTests(unittest.TestCase):
             metadata.provider_source_locations(path, "https://rpms.remirepo.net/SRPMS/repoview/php83-php.html", source),
             ["https://rpms.remirepo.net/SRPMS/" + source],
         )
+
+    def test_deployment_listener_parsing_and_rpm_queries_work_with_python27(self):
+        original = (deployment._proc_fds, deployment._proc_link, deployment._proc_read)
+        try:
+            deployment._proc_fds = lambda pid: ["3"]
+            deployment._proc_link = lambda path: "socket:[777]"
+            deployment._proc_read = lambda path: (
+                "sl local_address rem_address st tx_queue tr retrnsmt uid timeout inode\n"
+                "0: 0100007F:232C 00000000:0000 0A 0:0 0:0 0 0 0 777 1 0 0 0 0\n"
+            )
+            result = deployment._owned_listeners(1, [dict(type="tcp", address="127.0.0.1", port=9004)])
+            self.assertEqual(result[0]["port"], 9004)
+            with self.assertRaises(deployment.DeploymentError):
+                deployment._owned_listeners(1, [dict(type="tcp", address="127.0.0.1", port=9999)])
+        finally:
+            deployment._proc_fds, deployment._proc_link, deployment._proc_read = original
+        for query in (deployment.RPM_QUERY,):
+            self.assertNotIn("\n", query.replace("\\n", ""))
+            self.assertNotIn("\t", query.replace("\\t", ""))
+
+    def test_source_build_helpers_reject_malformed_arguments_with_python27(self):
+        with self.assertRaises(ValueError):
+            configure_source.validate(["--"], "--enable-cli")
+        with self.assertRaises(ValueError):
+            source_build.safe("x'; touch /tmp/p; '")
+        self.assertTrue(callable(stage_source.stage))
 
 
 if __name__ == "__main__":

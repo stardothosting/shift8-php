@@ -20,7 +20,7 @@ usage() {
     cat <<'EOF'
 shift8-php - read-only PHP package discovery and authenticated source preparation
 
-Usage: shift8-php <discover|plan|prepare|check> <installed-package> [options]
+Usage: shift8-php <discover|plan|prepare|environment|build|recovery|check> <installed-package> [options]
        shift8-php <deploy|rollback> <installed-package>
 
 Options:
@@ -31,6 +31,14 @@ Options:
   --source-map=PATH       Reviewed, checksum-pinned packaging file map
   --source-keyring=PATH   Trusted keyring for Debian source signatures
   --build-profile=PATH    Explicitly reviewed isolated mock build profile (EL7 Remi)
+  --build-environment=PATH Reviewed source-first compiler/mock/private OpenSSL inputs
+  --deployment-policy=PATH Reviewed recovery/service/application-health policy
+  --environment-dir=PATH  New directory for the generated mock config and pinned OpenSSL (environment)
+  --openssl-version=X.Y.Z Maintained OpenSSL 3.5 LTS release to build privately (environment)
+  --jobs=N                Parallel build jobs for the generated environment (default: CPU count)
+  --recovery-dir=PATH     New directory for signature-verified rollback RPMs (recovery command)
+  --recovery-repos=IDS    Comma-separated repository ids to search for the exact installed RPMs
+  --apply                Apply a managed deploy/rollback (default: transaction inspection)
   --manifest=PATH         Prepared manifest for read-only compatibility check
   --dry-run              Discover and plan; do not persist or download sources
   --offline              Use previously authenticated, unexpired cached inputs only
@@ -47,7 +55,8 @@ EOF
 
 COMMAND=${1:-}
 [[ $# -eq 0 ]] || shift
-PACKAGE='' TARGET='' SOURCE_MAP='' SOURCE_KEYRING='' BUILD_PROFILE='' MANIFEST=''
+PACKAGE='' TARGET='' SOURCE_MAP='' SOURCE_KEYRING='' BUILD_PROFILE='' BUILD_ENVIRONMENT='' MANIFEST='' DEPLOYMENT_POLICY=''
+APPLY=0 HOST_MUTATION_POSSIBLE=0 RECOVERY_DIR='' RECOVERY_REPOS='' ENVIRONMENT_DIR='' OPENSSL_VERSION='' BUILD_JOBS=''
 ARTIFACT_DIR=/var/lib/shift8-php
 DRY_RUN=0 OFFLINE=0 IPV4=0 VERBOSE=0 SOURCE_ONLY=0 SOURCE_FIRST=0
 WORK='' LOG_FILE='' OPERATION=initialization BUILD_PID=''
@@ -61,7 +70,7 @@ case "$COMMAND" in
         usage
         exit 0
         ;;
-    discover | plan | prepare | check | deploy | rollback) ;;
+    discover | plan | prepare | environment | build | recovery | check | deploy | rollback) ;;
     *) die 2 "Unknown command: $COMMAND" ;;
 esac
 for argument in "$@"; do
@@ -71,6 +80,11 @@ for argument in "$@"; do
             [[ -n $TARGET ]] || die 2 "Target must not be empty."
             ;;
         --artifact-dir=*) ARTIFACT_DIR=${argument#*=} ;;
+        --environment-dir=*) ENVIRONMENT_DIR=${argument#*=} ;;
+        --openssl-version=*) OPENSSL_VERSION=${argument#*=} ;;
+        --jobs=*) BUILD_JOBS=${argument#*=} ;;
+        --recovery-dir=*) RECOVERY_DIR=${argument#*=} ;;
+        --recovery-repos=*) RECOVERY_REPOS=${argument#*=} ;;
         --source-map=*)
             SOURCE_MAP=${argument#*=}
             [[ -n $SOURCE_MAP ]] || die 2 "Source map path must not be empty."
@@ -88,6 +102,9 @@ for argument in "$@"; do
             MANIFEST=${argument#*=}
             [[ -n $MANIFEST ]] || die 2 "Manifest path must not be empty."
             ;;
+        --build-environment=*) BUILD_ENVIRONMENT=${argument#*=} ;;
+        --deployment-policy=*) DEPLOYMENT_POLICY=${argument#*=} ;;
+        --apply) APPLY=1 ;;
         --dry-run) DRY_RUN=1 ;;
         --offline) OFFLINE=1 ;;
         --ipv4) IPV4=1 ;;
@@ -112,7 +129,16 @@ for argument in "$@"; do
 done
 [[ $PACKAGE =~ ^[a-zA-Z0-9][a-zA-Z0-9.+:_-]*$ ]] || die 2 "A valid, exact installed package identifier is required."
 if [[ $COMMAND == deploy || $COMMAND == rollback ]]; then
-    die 3 "$COMMAND is disabled: validated builds, runtime checks and recovery are not implemented."
+    [[ -n $DEPLOYMENT_POLICY && -f $DEPLOYMENT_POLICY ]] ||
+        die 3 "$COMMAND is disabled without a reviewed --deployment-policy and complete validated recovery."
+    [[ -z $BUILD_PROFILE && -z $BUILD_ENVIRONMENT && -z $TARGET && $SOURCE_FIRST -eq 0 ]] ||
+        die 2 "Managed deployment does not accept build/target/source-first options."
+    (( !DRY_RUN || !APPLY )) || die 2 "--dry-run cannot be combined with --apply."
+    if [[ $COMMAND == deploy ]]; then
+        [[ -n $MANIFEST && -f $MANIFEST ]] || die 2 "deploy requires a verified build --manifest."
+    fi
+elif [[ -n $DEPLOYMENT_POLICY || $APPLY -eq 1 ]]; then
+    die 2 "Deployment policies and --apply are only valid with deploy or rollback."
 fi
 [[ -z $TARGET || $TARGET =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || die 2 "Target must be a stable X.Y.Z version."
 [[ -n $ARTIFACT_DIR ]] || die 2 "Artifact directory must not be empty."
@@ -127,9 +153,64 @@ for dependency in mktemp tar; do
     require "$dependency"
 done
 select_metadata_python
+if [[ $COMMAND == recovery ]]; then
+    [[ -n $RECOVERY_DIR && ! -e $RECOVERY_DIR ]] || die 2 "recovery requires a new --recovery-dir that does not exist yet."
+    [[ $SOURCE_FIRST -eq 0 && -z $TARGET && -z $MANIFEST ]] || die 2 "recovery accepts only the package, --recovery-dir and --recovery-repos."
+    require rpm
+    require curl
+    SOURCE_FIRST=1
+elif [[ -n $RECOVERY_DIR || -n $RECOVERY_REPOS ]]; then
+    die 2 "--recovery-dir/--recovery-repos are only valid with recovery."
+fi
+if [[ $COMMAND == environment ]]; then
+    [[ -n $ENVIRONMENT_DIR && ! -e $ENVIRONMENT_DIR && -n $OPENSSL_VERSION ]] ||
+        die 2 "environment requires a new --environment-dir and an explicit --openssl-version."
+    [[ $SOURCE_FIRST -eq 0 && -z $TARGET && -z $MANIFEST ]] || die 2 "environment accepts only package, directory, OpenSSL version and jobs."
+    require curl
+    SOURCE_FIRST=1
+elif [[ -n $ENVIRONMENT_DIR || -n $OPENSSL_VERSION || -n $BUILD_JOBS ]]; then
+    die 2 "--environment-dir/--openssl-version/--jobs are only valid with environment."
+fi
+if [[ $COMMAND == build ]]; then
+    [[ -n $MANIFEST && -f $MANIFEST && -n $BUILD_ENVIRONMENT && -f $BUILD_ENVIRONMENT ]] ||
+        die 2 "build requires a verified --manifest and reviewed --build-environment."
+    [[ -z $BUILD_PROFILE && -z $SOURCE_MAP && -z $TARGET ]] ||
+        die 2 "Source-first build uses the prepared target, not vendor profiles, maps or a new target."
+    ((!DRY_RUN && !OFFLINE)) || die 2 "Use plan for inspection; offline/dry-run source builds are not supported."
+    require mock
+    require rpm
+    require setsid
+    require flock
+    WORK=$(mktemp -d "${TMPDIR:-/tmp}/shift8-php.XXXXXXXX")
+    ARTIFACT_DIR=$(meta store "$ARTIFACT_DIR")
+    exec 9>>"$ARTIFACT_DIR/.prepare.lock"
+    flock -n 9 || die 4 "Another operation is using this artifact store."
+    BUILD_DIR=$(mktemp -d "$ARTIFACT_DIR/builds/source-build.XXXXXXXX")
+    rmdir "$BUILD_DIR"
+    "${METADATA_PYTHON}" "$BASE_DIR/lib/source_build.py" initialize "$MANIFEST" "$PACKAGE" "$BUILD_DIR"
+    LOG_FILE=$BUILD_DIR/preparation.log
+    BUILD_PROFILE=$("${METADATA_PYTHON}" "$BASE_DIR/lib/source_build.py" \
+        "$BUILD_DIR/manifest.json" "$BUILD_ENVIRONMENT" "$BUILD_DIR/source-inputs")
+    rm -- "$BUILD_DIR/manifest.json"
+    OPERATION=source-build
+    build_rpm
+    meta manifest "$BUILD_DIR" isolated-rpm-build
+    meta verify-manifest "$BUILD_DIR/manifest.json"
+    log "Source-first RPM artifacts built. Signing, native target validation and deployment approval remain mandatory."
+    printf '%s\n' "$BUILD_DIR/manifest.json"
+    exit 0
+elif [[ -n $BUILD_ENVIRONMENT ]]; then
+    die 2 "--build-environment is only valid with build."
+fi
+if [[ $COMMAND == rollback ]]; then
+    if ((APPLY)); then HOST_MUTATION_POSSIBLE=1; fi
+    OPERATION=managed-rollback
+    "${METADATA_PYTHON}" "$BASE_DIR/lib/deployment_cli.py" rollback "$PACKAGE" "" "" "$DEPLOYMENT_POLICY" "$APPLY"
+    exit 0
+fi
 if [[ $COMMAND == check ]]; then
     [[ -n $MANIFEST ]] || die 2 "check requires --manifest pointing to a prepared build."
-elif [[ -n $MANIFEST ]]; then
+elif [[ -n $MANIFEST && $COMMAND != deploy && $COMMAND != rollback ]]; then
     die 2 "--manifest is only valid with check."
 fi
 if [[ -n $BUILD_PROFILE ]]; then
@@ -159,6 +240,23 @@ if [[ $COMMAND == prepare ]] && ((!DRY_RUN)); then
 fi
 OPERATION=discovery
 discover
+if [[ $COMMAND == deploy || $COMMAND == rollback ]]; then
+    if ((APPLY)); then HOST_MUTATION_POSSIBLE=1; fi
+    OPERATION=managed-$COMMAND
+    "${METADATA_PYTHON}" "$BASE_DIR/lib/deployment_cli.py" "$COMMAND" "$PACKAGE" "$MANIFEST" \
+        "$WORK/discovery.json" "$DEPLOYMENT_POLICY" "$APPLY"
+    exit 0
+fi
+if [[ $COMMAND == environment ]]; then
+    : "${BUILD_JOBS:=$(getconf _NPROCESSORS_ONLN)}"
+    "${METADATA_PYTHON}" "$BASE_DIR/lib/environment_setup.py" "$WORK/discovery.json" "$ENVIRONMENT_DIR" "$OPENSSL_VERSION" "$BUILD_JOBS"
+    exit 0
+fi
+if [[ $COMMAND == recovery ]]; then
+    "${METADATA_PYTHON}" "$BASE_DIR/lib/recovery.py" "$WORK/discovery.json" "$RECOVERY_DIR" "$RECOVERY_REPOS"
+    log "Recovery RPMs verified in $RECOVERY_DIR; reference this directory from the deployment policy."
+    exit 0
+fi
 if [[ $COMMAND == discover ]]; then
     cat "$WORK/discovery.json"
     exit 0
