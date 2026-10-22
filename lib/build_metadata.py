@@ -165,7 +165,9 @@ def compiler_report(directory):
     data = validate_staged(directory)
     for role in ("cc", "cxx"):
         text = meta.read(os.path.join(directory, "build-logs", role + ".stdout")).strip()
-        if not re.match(str(data["compiler"]["major"]) + r"(?:\.|\Z)", text):
+        match = re.search(r"(?m)(?:^|\s)(\d+(?:\.\d+)+)\s*$", text)
+        version = match.group(1) if match else text
+        if not re.match(str(data["compiler"]["major"]) + r"(?:\.|\Z)", version):
             raise ValueError("Isolated {} compiler differs from the reviewed major version".format(role))
 
 

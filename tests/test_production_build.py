@@ -214,7 +214,7 @@ class ProductionTests(ProductionFixture):
         build.stage(str(path), str(directory))
         (directory / "build-logs").mkdir()
         for name in ("cc", "cxx"):
-            (directory / "build-logs" / (name + ".stdout")).write_text("10.3.1\n")
+            (directory / "build-logs" / (name + ".stdout")).write_text("warning from wrapper\n10.3.1\n")
         build.compiler_report(str(directory))
         (directory / "build-logs/cc.stdout").write_text("4.8.5\n")
         with self.assertRaisesRegex(ValueError, "compiler"):
