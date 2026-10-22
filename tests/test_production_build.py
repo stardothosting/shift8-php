@@ -296,6 +296,7 @@ elif "-dumpversion" in args:
 elif "--copyout" in args:
     source = args[args.index("--copyout") + 1]
     destination = pathlib.Path(args[-1])
+    destination.mkdir(parents=True, exist_ok=True)
     if source.endswith("SRPMS"):
         name = "php-8.2.35-1.el7.shift8.src.rpm"
     else:

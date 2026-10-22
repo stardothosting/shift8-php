@@ -57,7 +57,7 @@ build_rpm() {
         grep -F -- "$option" "$WORK/mock-help" >/dev/null || die 3 "Installed mock lacks required capability $option. Use a compatible operator-configured build host."
     done
     build_meta stage "$BUILD_PROFILE" "$BUILD_DIR"
-    mkdir "$BUILD_DIR/build-logs" "$BUILD_DIR/packages"
+    mkdir "$BUILD_DIR/build-logs"
     input_id=$(build_meta input-id "$BUILD_DIR/build-inputs")
     printf '%s\n' "$input_id" >"$BUILD_DIR/build-input-id"
     config=$(meta get "$BUILD_DIR/build-inputs/profile.json" mock_config.path)
@@ -100,8 +100,7 @@ build_rpm() {
     log "Skipping host build-dependency repository sweep; mock --installdeps remains authoritative for isolated builds."
     build_phase dependency-srpm mock "${mock_options[@]}" --chroot -- "${compiler_environment[@]}" \
         rpmbuild -bs --define '_topdir /builddir/build' "/builddir/build/SOURCES/$spec"
-    mkdir "$BUILD_DIR/dependency-srpm"
-    build_phase collect-dependency-srpm mock "${mock_options[@]}" --copyout /builddir/build/SRPMS "$BUILD_DIR/dependency-srpm/"
+    build_phase collect-dependency-srpm mock "${mock_options[@]}" --copyout /builddir/build/SRPMS "$BUILD_DIR/dependency-srpm"
     meta flatten-rpms "$BUILD_DIR/dependency-srpm"
     local -a dependency_sources
     shopt -s nullglob
@@ -122,9 +121,12 @@ build_rpm() {
         --define "_smp_mflags -j$jobs" "/builddir/build/SOURCES/$spec"
     build_phase regenerate-source mock "${mock_options[@]}" --chroot -- "${compiler_environment[@]}" \
         rpmbuild -bs --define '_topdir /builddir/build' "/builddir/build/SOURCES/$spec"
-    build_phase collect-binary mock "${mock_options[@]}" --copyout /builddir/build/RPMS "$BUILD_DIR/packages/"
-    build_phase collect-source mock "${mock_options[@]}" --copyout /builddir/build/SRPMS "$BUILD_DIR/packages/"
-    meta flatten-rpms "$BUILD_DIR/packages"
+    build_phase collect-binary mock "${mock_options[@]}" --copyout /builddir/build/RPMS "$BUILD_DIR/packages-binary"
+    build_phase collect-source mock "${mock_options[@]}" --copyout /builddir/build/SRPMS "$BUILD_DIR/packages-source"
+    mkdir "$BUILD_DIR/packages"
+    meta flatten-rpms "$BUILD_DIR/packages-binary"
+    meta flatten-rpms "$BUILD_DIR/packages-source"
+    mv "$BUILD_DIR/packages-binary"/*.rpm "$BUILD_DIR/packages-source"/*.rpm "$BUILD_DIR/packages/"
     build_meta artifacts "$BUILD_DIR"
     final_id=$(build_meta input-id "$BUILD_DIR/build-inputs")
     [[ $final_id == "$input_id" ]] || die 7 "Build inputs changed; all generated artifacts are invalid and must be rebuilt."
