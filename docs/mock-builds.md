@@ -45,6 +45,22 @@ replace glibc, or claim arbitrary PECL binaries can be retained. Those surfaces
 must use a pinned, tested dependency graph and an actual recovery payload before
 this route can install anything.
 
+### Native source-first preparation check
+
+The source-first route has been exercised on the CentOS 7.9 Remi php83 host
+after a manual file update left running PHP at 8.3.36 and RPM metadata at 8.3.8.
+It selected the running branch's official 8.3.36 release, retrieved and verified
+the upstream tarball, and wrote a checked source-preparation manifest without
+querying historical package repositories or downloading packaging inputs.
+
+The contract identified the parallel paths, 41 core features, seven separate
+extension packages, and independently matching FPM facts. It recorded the
+installed Apache module and package/runtime drift as transaction blockers, and
+identified the legacy OpenSSL runtime as requiring a private-source decision.
+No installed PHP files, host libraries or services were changed. This is native
+evidence for inspection/source preparation only, not a source-first build or
+deployment test.
+
 This is an **experimental build driver**, not certification that PHP 8.2.35 or
 any future release is production-safe on EL7. Its orchestration is regression
 tested with a mock-command fixture. A parallel Remi PHP 8.3.36 build has also
