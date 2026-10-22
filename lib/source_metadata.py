@@ -146,10 +146,19 @@ def contract(discovery, release):
         block("fpm-uninspected", "FPM must be inspected separately from CLI.")
 
     shared, extension_packages, preserved = {}, [], []
+    apache_module = None
     for package in family["packages"]:
         files = package["files"]
-        if any(re.search(r"/(?:httpd|apache2)/.*(?:libphp|php[0-9]).*\.so$", path) for path in files):
-            block("apache-module", "An installed Apache PHP module requires an Apache/APXS adapter.", package["name"])
+        modules = [path for path in files if re.search(r"/(?:httpd|apache2)/.*(?:libphp|php[0-9]).*\.so$", path)]
+        if modules:
+            # The real module is the file the build emits; other matches are compatibility aliases.
+            real = [path for path in modules if os.path.basename(path) in ("libphp.so", "libphp8.so")]
+            if package["role"] != "core" or len(real) != 1 or apache_module:
+                block("apache-module", "Installed Apache PHP module layout needs an explicit adapter.",
+                      dict(package=package["name"], files=modules))
+            else:
+                apache_module = dict(package=package["name"], path=real[0],
+                                     aliases=[path for path in modules if path != real[0]])
         if package["role"] != "core":
             extension_packages.append(dict(name=package["name"], version=package["version"],
                                            release=package["release"], files=[p for p in files if p.endswith(".so")],
@@ -247,7 +256,7 @@ def contract(discovery, release):
     build_inputs = dict(platform="centos-7.9", architecture=discovery["architecture"],
                         target=release["version"], upstream=release["source"], layout=paths,
                         abi={key: runtime[key] for key in ("php_api", "module_api", "zend_extension_api", "zts")},
-                        features=features, capabilities=capabilities,
+                        features=features, capabilities=capabilities, apache_module=apache_module,
                         dependencies=[dict(name=item["name"], policy=item["policy"]) for item in requirements])
     return dict(
         schema_version=1, strategy="source-first-managed-replacement",
@@ -256,7 +265,7 @@ def contract(discovery, release):
         installed_runtime=runtime["version"], target=release["version"], branch=branch,
         installation_state=discovery.get("installation_state"),
         layout=dict(adapter=layout_id, paths=paths), features=features, capabilities=capabilities,
-        configure_arguments=configure, configure_arguments_executable=False,
+        apache_module=apache_module, configure_arguments=configure, configure_arguments_executable=False,
         dependencies=requirements, observed_library_versions=versions,
         separately_packaged_extensions=extension_packages,
         preserve=dict(configuration_files=sorted(set(preserved)), services=discovery.get("services", [])),

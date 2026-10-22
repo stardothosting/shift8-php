@@ -78,6 +78,8 @@ def options(discovery):
     ]
     if discovery["family"]["fpm_binaries"]:
         result.extend(["--enable-fpm", "--with-fpm-systemd", "--with-fpm-acl"])
+    if plan.get("apache_module"):
+        result.append("--with-apxs2=/usr/bin/apxs")
     if runtime["zts"]:
         result.append("--enable-zts")
     for feature in plan["features"]:
@@ -182,6 +184,7 @@ def generate(manifest_path, environment_path, destination):
             if (
                 path.startswith(discovery["runtime"]["extension_dir"] + "/") and path.endswith(".so")
                 or path in (discovery["runtime"]["executable"],) + tuple(discovery["family"]["fpm_binaries"])
+                or plan.get("apache_module") and path == plan["apache_module"]["path"]
                 or path.startswith(plan["layout"]["paths"]["prefix"] + "/bin/") and basename in ("php-cgi", "phar", "phar.phar", "phpize", "php-config")
             ):
                 updated_files.add(path)
@@ -217,6 +220,8 @@ def generate(manifest_path, environment_path, destination):
             if capability:
                 requires.append(capability)
     requires.append("libpng-devel")
+    if plan.get("apache_module"):
+        requires.extend(["httpd-devel", "httpd"])
     if any(item["name"] == "imap" for item in plan["dependencies"]):
         requires.append("pkgconfig(krb5)")
     lines = [
@@ -264,7 +269,23 @@ def generate(manifest_path, environment_path, destination):
         "export LD_LIBRARY_PATH=%{_builddir}/openssl-stage" + prefix + "/lib64",
         "/usr/bin/python %{SOURCE3} %{SOURCE2}",
         "make -j" + str(jobs), "",
-        "%install", "rm -rf %{buildroot}", "make install INSTALL_ROOT=%{buildroot}",
+        "%install", "rm -rf %{buildroot}",
+    ])
+    if plan.get("apache_module"):
+        # apxs -a edits an httpd.conf under INSTALL_ROOT; give it a throwaway one (the stage step discards it).
+        lines.extend([
+            'conf="$(/usr/bin/apxs -q SYSCONFDIR)"', 'mkdir -p "%{buildroot}$conf"',
+            'touch "%{buildroot}$conf/httpd.conf"',
+        ])
+    lines.append("make install INSTALL_ROOT=%{buildroot}")
+    if plan.get("apache_module"):
+        module = plan["apache_module"]["path"]
+        lines.extend([
+            "module=$(find %{buildroot} -type f -name 'libphp*.so' | head -n 1)", 'test -n "$module"',
+            "mkdir -p %{buildroot}" + os.path.dirname(module),
+            '[ "$module" = "%{buildroot}' + module + '" ] || cp "$module" "%{buildroot}' + module + '"',
+        ])
+    lines.extend([
         "mkdir -p %{buildroot}" + prefix,
         "cp -a %{_builddir}/openssl-stage" + prefix + "/. %{buildroot}" + prefix + "/",
         "mkdir -p %{buildroot}" + discovery["runtime"]["extension_dir"],

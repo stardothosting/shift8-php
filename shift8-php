@@ -288,7 +288,7 @@ if ((SOURCE_FIRST)); then
     meta manifest "$BUILD_DIR" source-preparation
     meta verify-manifest "$BUILD_DIR/manifest.json"
     log "Authenticated upstream source and installed contract prepared. No build or replacement was performed."
-    log "Source-first builder, private dependency resolution and deployment are not implemented; inspect source-plan.json."
+    log "Next: inspect source-plan.json, then run environment and build with this manifest."
     printf '%s\n' "$BUILD_DIR/manifest.json"
     exit 0
 fi

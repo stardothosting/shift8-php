@@ -105,10 +105,19 @@ class SourceContractTests(TemporaryTest):
     def test_unknown_extension_and_apache_module_are_not_silently_dropped(self):
         data = snapshot()
         data["runtime"]["loaded_extensions"].append("proprietary loader")
-        data["family"]["packages"][0]["files"].append("/usr/lib64/httpd/modules/libphp.so")
+        data["family"]["packages"][0]["files"].append("/usr/lib64/httpd/modules/libphp-custom.so")
         codes = [item["code"] for item in source.contract(data, release())["blockers"]]
         self.assertIn("unknown-extension", codes)
         self.assertIn("apache-module", codes)
+
+    def test_standard_apache_module_with_alias_is_planned_not_blocked(self):
+        data = snapshot()
+        data["family"]["packages"][0]["files"].extend([
+            "/opt/remi/php83/root/usr/lib64/httpd/modules/libphp.so", "/usr/lib64/httpd/modules/libphp83.so"])
+        plan = source.contract(data, release())
+        self.assertNotIn("apache-module", [item["code"] for item in plan["blockers"]])
+        self.assertEqual(plan["apache_module"]["path"], "/opt/remi/php83/root/usr/lib64/httpd/modules/libphp.so")
+        self.assertEqual(plan["apache_module"]["aliases"], ["/usr/lib64/httpd/modules/libphp83.so"])
 
     def test_loaded_and_installed_core_modules_preserve_linkage(self):
         data = snapshot()
@@ -244,7 +253,7 @@ class SourceFirstCommandTests(CommandFixture):
         self.assertFalse((path.parent / "source-discovery").exists())
         self.assertFalse((path.parent / "sources/packaging").exists())
         self.assertFalse(any(call[0] in ("repoquery", "dnf", "mock") for call in self.calls()))
-        self.assertIn("not implemented", result.stderr)
+        self.assertIn("run environment and build", result.stderr)
         manifest["source_contract"]["target"] = "8.2.999"
         metadata.dump(manifest, path)
         with self.assertRaisesRegex(ValueError, "Source contract differs"):
