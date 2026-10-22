@@ -242,6 +242,8 @@ Parallel Remi PHP 8.3.36 RPMs have been produced on CentOS 7.9 with the reviewed
 EL7 compatibility changes. Provider-tolerated PHP test failures are reported
 separately; RPM production does not establish a clean test pass. The build guide
 includes a read-only native transaction check and an isolated runtime smoke.
+A disposable-root upgrade and rollback have also passed with all 59 baseline
+modules and seven retained PECL packages; production PHP was not replaced.
 Production application/pool checks, configuration backups, recovery packages and
 rollback still require separate work before installation. Unreviewed automatic
 patch adaptation, development-package swaps and private package signing are not

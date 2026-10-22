@@ -6,6 +6,40 @@ tested with a mock-command fixture. A parallel Remi PHP 8.3.36 build has also
 completed on CentOS 7.9 using reviewed current packaging and EL7 compatibility
 changes. Compilation alone does not validate a production upgrade.
 
+## Verified PHP 8.3.36 exercise
+
+The repository recipe has completed a fresh full build on CentOS 7.9 for the
+parallel Remi family. A separate disposable root was populated with the original
+PHP 8.3.8 RPMs and the seven exact, signature-verified installed PECL versions,
+then upgraded with the 16 selected core replacement RPMs.
+
+The exercise passed:
+
+- Manifest/digest verification and `rpm --test` against the unchanged live host.
+- An actual upgrade in the disposable root, retaining all 59 baseline modules.
+- The runtime smoke and packaged FPM configuration check after that upgrade.
+- Six upstream OpenSSL peer/SAN/name-verification tests, with no skips, including
+  IPv4/IPv6 SAN handling and rejection of a mismatched peer name.
+- An additional smoke with the built FFI and intl RPMs installed **only** in the
+  disposable root, exercising FFI directives and the ICU 73 path.
+- A rollback to the original RPMs in that root, followed by the baseline runtime
+  smoke and packaged FPM configuration check.
+
+The full provider PHP suite still reported three failures:
+`openssl_error_string_basic.phpt`, `bug74589_utf8.phpt`, and
+`php_cli_server_pdeathsig.phpt`. They are not waived by the successful targeted
+checks. Review the retained diffs before deployment; the first concerns error
+codes returned by the old OpenSSL, while the others concern Unicode paths and
+CLI server worker shutdown. These observations are not a production safety
+claim or permission to discard the tests.
+
+Production PHP remained at 8.3.8 and its FPM start timestamp did not change.
+Custom production pools, application traffic and external data/cache services
+were not exercised. The RPMs remain local unsigned, non-deployable artifacts.
+The rollback rehearsal does not replace production configuration backups or a
+reviewed maintenance/recovery plan. Other distributions/families and future
+upstream releases still need their own native validation.
+
 ## Responsibilities and adapter boundaries
 
 - The Bash CLI/native adapters discover only the requested runtime family.
