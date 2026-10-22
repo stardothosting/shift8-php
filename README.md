@@ -167,7 +167,7 @@ represented as vendor-signed material.
 | `--source-only` | Retrieve sources even when a repository candidate exists. |
 | `--source-map=PATH` | Supply reviewed packaging URLs and SHA-256 values. |
 | `--source-keyring=PATH` | Use a trusted keyring for Debian source signatures. |
-| `--build-profile=PATH` | Opt into the experimental mock build driver. |
+| `--build-profile=PATH` | Opt into the experimental mock build driver with a real local reviewed profile path; omit it for source preparation only. |
 | `--manifest=PATH` | Select a saved manifest for `check`. |
 | `--offline` | Use verified cached inputs without network requests. |
 | `--ipv4` | Force IPv4 for curl downloads and RPM repository queries. |

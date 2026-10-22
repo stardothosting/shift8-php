@@ -125,7 +125,12 @@ elif [[ -n $MANIFEST ]]; then
 fi
 if [[ -n $BUILD_PROFILE ]]; then
     [[ $COMMAND == prepare ]] || die 2 "--build-profile is only valid with prepare."
-    [[ -f $BUILD_PROFILE ]] || die 2 "Build profile does not exist: $BUILD_PROFILE"
+    if [[ ! -f $BUILD_PROFILE ]]; then
+        if [[ $BUILD_PROFILE == /absolute/path/to/profile.json || $BUILD_PROFILE == /absolute/reviewed/profile.json ]]; then
+            die 2 "Build profile path is still a documentation placeholder: $BUILD_PROFILE. Replace it with a real local profile path, or omit --build-profile to prepare sources without starting an isolated build."
+        fi
+        die 2 "Build profile does not exist: $BUILD_PROFILE. Supply a real local profile path, or omit --build-profile to prepare sources without starting an isolated build."
+    fi
     if ((!DRY_RUN)); then
         require mock
         require rpm

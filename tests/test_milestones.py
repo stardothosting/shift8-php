@@ -502,6 +502,16 @@ class CommandTests(TemporaryTest):
                 self.assertIn("not modified", result.stderr)
                 self.assertFalse(any(call[0] == "curl" for call in self.calls()))
 
+    def test_build_profile_placeholder_is_reported_as_placeholder(self):
+        result = self.cli(
+            "prepare", "php-cli", "--artifact-dir=" + str(self.artifacts),
+            "--build-profile=/absolute/path/to/profile.json",
+        )
+        self.assertEqual(result.returncode, 2)
+        self.assertIn("documentation placeholder", result.stderr)
+        self.assertIn("omit --build-profile", result.stderr)
+        self.assertFalse(any(call[0] == "curl" for call in self.calls()))
+
     def test_prepare_produces_verified_non_deployable_manifest(self):
         result = self.prepare()
         self.assertEqual(result.returncode, 0, result.stderr)
