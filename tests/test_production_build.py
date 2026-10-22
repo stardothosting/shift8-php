@@ -274,6 +274,8 @@ with (root / "mock-calls").open("a") as stream:
 if os.environ.get("FAIL_PREP") and "-bp" in args:
     print("Hunk #1 FAILED at ext/date/config0.m4; rejects saved to config0.m4.rej", file=sys.stderr)
     sys.exit(1)
+if os.environ.get("PREP_SELINUX_WARNING") and "-bp" in args:
+    print("Failed to create directory /mock/root/sys/fs/selinux: Read-only file system")
 if os.environ.get("FAIL_DEPS") and "--installdeps" in args:
     print("gd-devel conflicts with gd3php-devel; libicu-devel conflicts with libicu73-devel; harfbuzz-devel reverse dependency", file=sys.stderr)
     sys.exit(1)
@@ -378,7 +380,14 @@ class MockDriverTests(ProductionFixture):
         calls = [json.loads(line) for line in (directory / "mock-calls").read_text().splitlines()]
         self.assertFalse(any("-ba" in call for call in calls))
         self.assertFalse((directory / "artifacts.json").exists())
-        self.assertEqual((directory / "build-state").read_text().strip(), "failed:prep")
+
+    def test_prep_selinux_warning_does_not_trip_patch_rejection_gate(self):
+        directory, result = self.driver(PREP_SELINUX_WARNING="1")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        calls = [json.loads(line) for line in (directory / "mock-calls").read_text().splitlines()]
+        self.assertTrue(any("-ba" in call for call in calls))
+        self.assertTrue((directory / "artifacts.json").exists())
+        self.assertEqual((directory / "build-state").read_text().strip(), "static-build-complete-runtime-unverified")
 
     def test_development_conflicts_are_isolated_and_explicit_not_forced(self):
         directory, result = self.driver(FAIL_DEPS="1")

@@ -113,7 +113,7 @@ build_rpm() {
     build_phase prep mock "${mock_options[@]}" --chroot -- "${compiler_environment[@]}" \
         rpmbuild -bp --define '_topdir /builddir/build' --define '__patch /usr/bin/patch --fuzz=0' \
         "/builddir/build/SOURCES/$spec"
-    if grep -Ei 'with fuzz|FAILED|saving rejects|Reversed .*patch' "$BUILD_DIR/build-logs/prep."*; then
+    if grep -Ei 'Hunk #[0-9]+ .*FAILED|saving rejects to file|Reversed .*patch|with fuzz [0-9]+' "$BUILD_DIR/build-logs/prep."*; then
         die 7 "%prep reported fuzz/rejected/reversed patches. Review original versus target context; no patch will be silently dropped."
     fi
     build_phase compile mock "${mock_options[@]}" --chroot -- "${compiler_environment[@]}" \
