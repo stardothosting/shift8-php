@@ -63,11 +63,11 @@ installation, supply its own CLI package:
 ./shift8-php prepare php83-php-cli --dry-run
 ```
 
-Discovery and preparation do not update either installation. The build driver is
-currently restricted to standard Remi PHP 8.2 on CentOS 7, not parallel Remi.
-It requires an existing mock environment and a reviewed set of final packaging
-files. No ready-to-use CentOS 7 profile or finalized compatibility patches are
-included.
+Discovery and preparation do not update either installation. The build driver
+currently supports CentOS 7 with reviewed profiles for standard Remi PHP 8.2
+and parallel Remi `php83-php` 8.3. It still requires an existing mock
+environment and a reviewed set of final packaging files. No ready-to-use CentOS
+7 profile or finalized compatibility patches are included.
 
 See [Building Remi RPMs with mock](docs/mock-builds.md) for the profile format,
 dependency queries, compiler setup, patch checks and build logs.

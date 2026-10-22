@@ -20,22 +20,29 @@ SPEC.loader.exec_module(build)
 
 
 class ProductionFixture(TemporaryTest):
-    def snapshot(self):
+    def snapshot(self, family_source="php", runtime_version="8.2.20", branch="8.2"):
         data = discovery()
         data.update(distribution=dict(id="centos", version="7.9.2009"))
+        package_prefix = "php83-php" if family_source == "php83-php" else "php"
+        cli_name = package_prefix + "-cli"
+        extension_name = package_prefix + "-pecl-redis5"
+        executable = "/opt/remi/php83/root/usr/bin/php" if family_source == "php83-php" else "/usr/bin/php"
+        extension_dir = "/opt/remi/php83/root/usr/lib64/php/modules" if family_source == "php83-php" else "/usr/lib64/php/modules"
         data["runtime"].update(
-            executable="/usr/bin/php", php_api="20220829", module_api="20220829",
-            zend_extension_api="420220829", zts=False, extension_dir="/usr/lib64/php/modules",
+            version=runtime_version, branch=branch,
+            executable=executable, php_api="20220829", module_api="20220829",
+            zend_extension_api="420220829", zts=False, extension_dir=extension_dir,
             loaded_extensions=["Core", "redis", "igbinary", "msgpack", "zip"],
             build={"Configure Command": "'/opt/rh/devtoolset-10/root/usr/bin/gcc'"},
         )
+        data["family"].update(source_name=family_source, source_reference="{}-{}.src.rpm".format(family_source, runtime_version + "-1.el7.remi"))
         package = dict(
-            name="php-cli", epoch="0", version="8.2.20", release="1.el7.remi", architecture="x86_64",
+            name=cli_name, epoch="0", version=runtime_version, release="1.el7.remi", architecture="x86_64",
             source_reference=data["family"]["source_reference"], requires=["libssl.so.10()(64bit)"],
             provides=["php(api) = 20220829"], role="core", configuration_files=[], files=[],
         )
-        extension = dict(package, name="php-pecl-redis5", version="5.3.7", role="separate-extension")
-        data["family"].update(packages=[package, extension], names=["php-cli", "php-pecl-redis5"], fpm_binaries=[])
+        extension = dict(package, name=extension_name, version="5.3.7", role="separate-extension")
+        data["family"].update(packages=[package, extension], names=[cli_name, extension_name], fpm_binaries=[])
         data["runtime_libraries"] = dict(
             complete=True, diagnostics=[],
             libraries={"/usr/lib64/libssl.so.10": dict(package="openssl-libs\t1:1.0.2k-26.el7_9\tx86_64", sha256="e" * 64)},
@@ -43,9 +50,11 @@ class ProductionFixture(TemporaryTest):
         data["compatibility"] = metadata.compatibility(data)
         return data
 
-    def profile(self, data=None):
+    def profile(self, data=None, target_version="8.2.35"):
         data = data or self.snapshot()
-        spec = self.write("php82.spec", "Name: php\nVersion: 8.2.35\n%prep\n%autosetup -p1\n%build\n")
+        spec_name = "php83.spec" if data["family"]["source_name"] == "php83-php" else "php82.spec"
+        spec_family = data["family"]["source_name"]
+        spec = self.write(spec_name, "Name: {}\nVersion: {}\n%prep\n%autosetup -p1\n%build\n".format(spec_family, target_version))
         patch = self.write("openssl-compat.patch", "--- a/ext/openssl/xp_ssl.c\n+++ b/ext/openssl/xp_ssl.c\n")
         original = self.write("original.patch", "original vendor patch\n")
         config = self.write("mock.cfg", "# operator-reviewed local configuration fixture\n")
@@ -53,14 +62,14 @@ class ProductionFixture(TemporaryTest):
         value = dict(
             schema_version=1, reviewed=True, configuration_closure_reviewed=True, signature_policy_reviewed=True,
             compatibility_sha256=data["compatibility"]["sha256"],
-            installed_source=data["family"]["source_reference"], target="8.2.35",
+            installed_source=data["family"]["source_reference"], target=target_version,
             mock_config=dict(path=str(config), sha256=metadata.digest(config)),
             trust_files=[dict(path=str(trust), sha256=metadata.digest(trust))],
             compiler=dict(cc="/opt/rh/devtoolset-10/root/usr/bin/gcc",
                           cxx="/opt/rh/devtoolset-10/root/usr/bin/g++", major=10),
             jobs=1,
             inputs=[
-                dict(name="php82.spec", role="spec", path=str(spec), sha256=metadata.digest(spec)),
+                dict(name=spec_name, role="spec", path=str(spec), sha256=metadata.digest(spec)),
                 dict(name="openssl-compat.patch", role="patch", path=str(patch), sha256=metadata.digest(patch),
                      original=dict(path=str(original), sha256=metadata.digest(original)),
                      review="Reviewed all five accessors, version gate and behavior; fixture does not supply a production patch"),
@@ -70,19 +79,20 @@ class ProductionFixture(TemporaryTest):
         metadata.dump(value, path)
         return path, value
 
-    def prepare_build(self):
-        data = self.snapshot()
-        profile_path, profile = self.profile(data)
+    def prepare_build(self, data=None, target_version="8.2.35", branch="8.2"):
+        data = data or self.snapshot()
+        profile_path, profile = self.profile(data, target_version=target_version)
         directory = self.directory / "build"
         directory.mkdir()
         metadata.dump(data, directory / "discovery.json")
         metadata.dump(dict(
-            version="8.2.35", branch="8.2", source=dict(url="https://www.php.net/distributions/php-8.2.35.tar.xz", sha256="a" * 64),
+            version=target_version, branch=branch,
+            source=dict(url="https://www.php.net/distributions/php-{}.tar.xz".format(target_version), sha256="a" * 64),
         ), directory / "release.json")
         (directory / "sources").mkdir()
-        (directory / "sources/php-8.2.35.tar.xz").write_bytes(b"authenticated upstream fixture")
+        (directory / "sources/php-{}.tar.xz".format(target_version)).write_bytes(b"authenticated upstream fixture")
         release = metadata.load(directory / "release.json")
-        release["source"]["sha256"] = metadata.digest(directory / "sources/php-8.2.35.tar.xz")
+        release["source"]["sha256"] = metadata.digest(directory / "sources/php-{}.tar.xz".format(target_version))
         metadata.dump(release, directory / "release.json")
         return directory, profile_path, profile
 
@@ -164,6 +174,13 @@ class ProductionTests(ProductionFixture):
         data["distribution"]["id"] = "almalinux"
         with self.assertRaisesRegex(ValueError, "gated"):
             build.profile(str(path), data, release)
+
+    def test_parallel_remi_php83_profile_is_supported(self):
+        data = self.snapshot(family_source="php83-php", runtime_version="8.3.8", branch="8.3")
+        path, _ = self.profile(data, target_version="8.3.36")
+        release = dict(version="8.3.36", branch="8.3")
+        profile = build.profile(str(path), data, release)
+        self.assertEqual(profile["target"], "8.3.36")
 
     def test_patch_context_changes_are_never_invented_or_silently_accepted(self):
         data = self.snapshot()

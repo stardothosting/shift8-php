@@ -146,12 +146,14 @@ If original packaging is no longer retrievable, also supply a reviewed
 `--source-map`. That is an explicit alternative to SRPM retrieval, not a claim of
 vendor authentication. No remote build script is executed on the host.
 
-Builds are gated to **standard Remi PHP 8.2 / CentOS 7**, matching the supplied
-production case. Parallel Remi, AlmaLinux and Debian discovery/source preparation
-remain available, but their build profiles are rejected pending native validation.
-Offline isolated builds are rejected until authenticated buildroot cache locking
-is implemented. `--build-only`, `--force-rebuild` and prerelease shortcuts are
-still unsupported; a fresh unique build prevents accidental reuse of stale output.
+Builds are gated to **CentOS 7 with reviewed Remi PHP profiles**. Supported
+families in this release are standard Remi PHP 8.2 and parallel Remi
+`php83-php` 8.3. Other parallel branches, AlmaLinux and Debian
+preparation remain available, but their build profiles are still rejected pending
+native validation. Offline isolated builds are rejected until authenticated
+buildroot cache locking is implemented. `--build-only`, `--force-rebuild` and
+prerelease shortcuts are still unsupported; a fresh unique build prevents
+accidental reuse of stale output.
 
 ## Phases and production regressions
 

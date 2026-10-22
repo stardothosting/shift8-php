@@ -29,12 +29,19 @@ def profile(path, discovery, release):
     if discovery["package_manager"] != "rpm":
         raise ValueError("Isolated builds currently support RPM only; Debian preparation remains available")
     platform = discovery["distribution"]
+    supported = {
+        ("php", "8.2"): "standard Remi PHP 8.2",
+        ("php83-php", "8.3"): "parallel Remi php83-php 8.3",
+    }
+    family = (discovery["family"]["source_name"], release["branch"])
     if (
         platform["id"] != "centos" or platform["version"].split(".")[0] != "7"
-        or discovery["family"]["source_name"] != "php" or release["branch"] != "8.2"
+        or family not in supported
         or not all("remi" in item["release"] for item in discovery["family"]["packages"] if item["role"] == "core")
     ):
-        raise ValueError("Mock builds are gated to standard Remi PHP 8.2 on CentOS 7; other combinations need separate validation")
+        raise ValueError(
+            "Mock builds are gated to CentOS 7 with supported Remi families (currently standard PHP 8.2 and parallel php83-php 8.3); other combinations need separate validation"
+        )
     compatibility = discovery.get("compatibility", {})
     if not compatibility.get("complete") or data.get("compatibility_sha256") != compatibility.get("sha256"):
         raise ValueError("Build profile does not match a complete target compatibility fingerprint")
