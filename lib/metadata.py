@@ -793,9 +793,9 @@ def provider_packaging_files(path, url):
                 if parse_qs(parsed.query).get("h", [""])[0] != tag:
                     continue
                 relative = parsed.path.split("/plain/", 1)[1].strip("/")
-                if "/" in relative:
+                if "/" in relative or not re.match(r"[A-Za-z0-9][A-Za-z0-9.+_~-]*\Z", relative):
                     continue
-                files[filename(relative)] = https(location)
+                files[relative] = https(location)
 
     parser = PackagingLinks()
     parser.feed(read(path))

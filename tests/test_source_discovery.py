@@ -161,6 +161,7 @@ class SourceDiscoveryTests(TemporaryTest):
             "packaging-tree.html",
             '<a href="/cgit/rpms/php/php83.git/plain/php83.spec?h=v8.3.8">spec</a>'
             '<a href="/cgit/rpms/php/php83.git/plain/php.ini?h=v8.3.8">ini</a>'
+            '<a href="/cgit/rpms/php/php83.git/plain/.gitignore?h=v8.3.8">dotfile</a>'
             '<a href="/cgit/rpms/php/php83.git/plain/php83.spec?h=v8.3.8">dup</a>'
             '<a href="/cgit/rpms/php/php83.git/plain/patches/fix.patch?h=v8.3.8">subdir</a>'
             '<a href="/cgit/rpms/php/php83.git/plain/php83.spec?h=v8.3.36">wrong-tag</a>'
