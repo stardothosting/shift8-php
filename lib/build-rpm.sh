@@ -32,12 +32,14 @@ build_phase() {
     done
     if wait "$BUILD_PID"; then code=0; else code=$?; fi
     BUILD_PID=''
+    harden_artifact_tree "$BUILD_DIR"
     tail -n 10 "$BUILD_DIR/build-logs/$phase.stdout" >&2
     tail -n 10 "$BUILD_DIR/build-logs/$phase.stderr" >&2
     printf '%s\t%s\t%s\n' "$phase" "$code" "$((SECONDS - started))" >>"$BUILD_DIR/build-phases.tsv"
     if ((code)); then
         printf 'failed:%s\n' "$phase" >"$BUILD_DIR/build-state"
         build_meta failure "$BUILD_DIR" "$phase" "$code"
+        harden_artifact_tree "$BUILD_DIR"
         die 7 "$phase failed (exit $code). Logs: $BUILD_DIR/build-logs. Review dependency conflicts or exact rejected patch hunks; do not discard patches or force package operations."
     fi
     build_meta check-inputs "$BUILD_DIR"

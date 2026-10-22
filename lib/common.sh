@@ -70,3 +70,9 @@ capture() {
     debug "Inspecting with $1"
     "$@" >"$destination" 2>>"$LOG_FILE"
 }
+
+harden_artifact_tree() {
+    local root=$1
+    [[ -d $root ]] || return 0
+    find "$root" -xdev -exec chmod u+rwX,go-rwx {} +
+}

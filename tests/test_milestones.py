@@ -6,6 +6,7 @@ import json
 import os
 import pathlib
 import shutil
+import stat
 import subprocess
 import tarfile
 import tempfile
@@ -279,6 +280,19 @@ class MetadataTests(TemporaryTest):
         (store / "cache/redirect").symlink_to(self.directory)
         with self.assertRaisesRegex(ValueError, "Untrusted"):
             metadata.store(str(store))
+
+    def test_harden_artifact_tree_removes_group_write_from_nested_files(self):
+        store = self.directory / "artifacts"
+        metadata.store(str(store))
+        target = store / "builds" / "nested.log"
+        target.write_text("data", encoding="utf-8")
+        target.chmod(0o664)
+        subprocess.run(
+            ["bash", "-c", 'set -e; BASE_DIR="$1"; source "$BASE_DIR/lib/common.sh"; harden_artifact_tree "$2"', "bash", str(ROOT), str(store)],
+            check=True,
+        )
+        metadata.store(str(store))
+        self.assertEqual(stat.S_IMODE(target.stat().st_mode), 0o600)
 
 
 MOCK = r'''#!/usr/bin/env python3
