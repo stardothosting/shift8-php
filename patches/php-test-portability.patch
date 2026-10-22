@@ -1,0 +1,33 @@
+--- a/ext/openssl/tests/openssl_error_string_basic.phpt
++++ b/ext/openssl/tests/openssl_error_string_basic.phpt
+@@ -10,11 +10,16 @@
+ <?php
+ // helper function to check openssl errors
+ function expect_openssl_errors($name, $expected_error_codes) {
++    // Packed OpenSSL < 3 errors have release-specific function bits.
++    $identity = static function ($code) {
++        return sprintf('%08X', hexdec($code) & 0xFF000FFF);
++    };
++    $expected_error_codes = array_map($identity, $expected_error_codes);
+     $expected_errors = array_fill_keys($expected_error_codes, false);
+     $all_errors = array();
+     while (($error_string = openssl_error_string()) !== false) {
+     if (preg_match(",.+:([0-9A-F]+):.+,", $error_string, $m) > 0) {
+-            $error_code = $m[1];
++            $error_code = $identity($m[1]);
+             if (isset($expected_errors[$error_code])) {
+                 $expected_errors[$error_code] = true;
+             }
+--- a/ext/standard/tests/directory/bug74589_utf8.phpt
++++ b/ext/standard/tests/directory/bug74589_utf8.phpt
+@@ -10,6 +10,10 @@
+ internal_encoding=utf-8
+ --FILE--
+ <?php
++if (PHP_OS_FAMILY !== 'Windows' &&
++    (setlocale(LC_CTYPE, '') === false || strcasecmp(nl_langinfo(CODESET), 'UTF-8') !== 0)) {
++    throw new RuntimeException('A usable UTF-8 character locale is required');
++}
+ /*
+ #vim: set fileencoding=utf-8
+ #vim: set encoding=utf-8

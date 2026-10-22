@@ -125,10 +125,12 @@ class ProductionTests(ProductionFixture):
         spec = next(item for item in data["inputs"] if item["role"] == "spec")
         self.assertIn("%bcond_without        iodbc", metadata.read(spec["path"]))
         self.assertIn("%if 0%{?rhel} == 7\nBuildRequires: pkgconfig(icu-i18n) >= 73", metadata.read(spec["path"]))
-        self.assertIn("%patch -P49 -p1 -b .iodbc\n%patch -P9999", metadata.read(spec["path"]))
+        self.assertIn("%patch -P49 -p1 -b .iodbc\n%patch -P9998", metadata.read(spec["path"]))
         self.assertIn("%bcond_with           iodbc", metadata.read(spec["original"]["path"]))
-        patch = data["inputs"][-1]
+        patch = next(item for item in data["inputs"] if item["name"] == "shift8-php83-el7.patch")
         self.assertEqual(patch["sha256"], metadata.digest(ROOT / "patches/php83-el7.patch"))
+        test_patch = next(item for item in data["inputs"] if item["name"] == "shift8-php-test-portability.patch")
+        self.assertEqual(test_patch["sha256"], metadata.digest(ROOT / "patches/php-test-portability.patch"))
         self.assertEqual(metadata.read(path), original_profile)
         with self.assertRaises(OSError):
             build.el7_profile(str(path), str(directory), str(output))
@@ -274,6 +276,14 @@ acquire_sources
             build.test_report(str(self.directory))
             self.assertEqual(metadata.load(self.directory / "php-tests.json")["status"], expected)
 
+    def test_enforced_suite_requires_environment_evidence(self):
+        logs = self.directory / "build-logs"
+        logs.mkdir()
+        (logs / "compile.stderr").write_text("")
+        (logs / "compile.stdout").write_text("Tests failed : 0\n")
+        with self.assertRaisesRegex(ValueError, "measured isolated build environment"):
+            build.test_report(str(self.directory), "enforce")
+
     def test_pinned_resume_rejects_symlinks_and_shared_files(self):
         path = self.directory / "partial"
         target = self.write("target", "source")
@@ -378,6 +388,13 @@ acquire_sources
         with self.assertRaisesRegex(ValueError, "changed"):
             build.validate_staged(str(directory))
 
+    def test_changed_environment_wrapper_invalidates_build(self):
+        directory, path, _ = self.prepare_build()
+        build.stage(str(path), str(directory))
+        (directory / "build-inputs/shift8-build-environment.py").write_text("unreviewed wrapper")
+        with self.assertRaisesRegex(ValueError, "environment wrapper changed"):
+            build.validate_staged(str(directory))
+
     def test_mock_config_and_trust_file_changes_stop_build(self):
         directory, path, profile = self.prepare_build()
         build.stage(str(path), str(directory))
@@ -471,6 +488,10 @@ elif "--buildrequires" in args:
     print("pkgconfig(oniguruma)\npkgconfig(gdlib)\npkgconfig(icu-uc)")
 elif "-dumpversion" in args:
     print("10.3.1")
+elif "-ba" in args:
+    print('SHIFT8_BUILD_ENVIRONMENT {"reaper": "pid-1", "pid": 1, "utf8_locale": "en_US.utf8"}')
+    if not os.environ.get("MISSING_TEST_SUMMARY"):
+        print("Tests failed : " + ("1" if os.environ.get("TOLERATED_TEST_FAILURE") else "0"))
 elif "--copyout" in args:
     source = args[args.index("--copyout") + 1]
     destination = pathlib.Path(args[-1])
@@ -531,6 +552,7 @@ class MockDriverTests(ProductionFixture):
         self.assertLess(prep, compile_step)
         self.assertTrue(any("-bs" in call for call in calls[compile_step + 1:]))
         self.assertIn("PATH=/opt/rh/devtoolset-10/root/usr/bin:/usr/bin:/bin", calls[compile_step])
+        self.assertIn("/builddir/build/SOURCES/shift8-build-environment.py", calls[compile_step])
         self.assertTrue(all(any(part.startswith("--uniqueext=shift8-") for part in call) for call in calls))
         self.assertFalse(metadata.load(directory / "artifacts.json")["deployable"])
         self.assertEqual((directory / "build-state").read_text().strip(), "static-build-complete-runtime-unverified")
@@ -580,6 +602,19 @@ class MockDriverTests(ProductionFixture):
         self.assertEqual(result.returncode, 7)
         self.assertIn("incompatible OpenSSL accessor", result.stderr)
         self.assertEqual(metadata.load(directory / "failure.json")["phase"], "compile")
+        self.assertFalse((directory / "artifacts.json").exists())
+
+    def test_vendor_tolerated_test_failure_blocks_success_manifest(self):
+        directory, result = self.driver(TOLERATED_TEST_FAILURE="1")
+        self.assertEqual(result.returncode, 7)
+        self.assertEqual(metadata.load(directory / "php-tests.json")["status"], "failed")
+        self.assertEqual((directory / "build-state").read_text().strip(), "failed:php-tests")
+        self.assertFalse((directory / "artifacts.json").exists())
+
+    def test_missing_test_summary_blocks_success_manifest(self):
+        directory, result = self.driver(MISSING_TEST_SUMMARY="1")
+        self.assertEqual(result.returncode, 7)
+        self.assertEqual(metadata.load(directory / "php-tests.json")["status"], "not-reported")
         self.assertFalse((directory / "artifacts.json").exists())
 
     def test_interrupt_terminates_only_the_active_build_process_group(self):

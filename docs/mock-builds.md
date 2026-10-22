@@ -25,13 +25,18 @@ The exercise passed:
 - A rollback to the original RPMs in that root, followed by the baseline runtime
   smoke and packaged FPM configuration check.
 
-The full provider PHP suite still reported three failures:
+That build's full provider PHP suite reported three failures:
 `openssl_error_string_basic.phpt`, `bug74589_utf8.phpt`, and
 `php_cli_server_pdeathsig.phpt`. They are not waived by the successful targeted
 checks. Review the retained diffs before deployment; the first concerns error
 codes returned by the old OpenSSL, while the others concern Unicode paths and
 CLI server worker shutdown. These observations are not a production safety
 claim or permission to discard the tests.
+
+Those three tests were subsequently reproduced against the built runtime and
+passed with the measured environment wrapper and reviewed test-portability
+patch described below, with none of the three skipped. This is separate
+evidence; the old build reports and RPMs are not relabelled as clean builds.
 
 Production PHP remained at 8.3.8 and its FPM start timestamp did not change.
 Custom production pools, application traffic and external data/cache services
@@ -228,6 +233,52 @@ review when upstream packaging or source changes. A future PHP patch release
 still has to pass native spec identity, dependency resolution, zero-fuzz patch
 application, the build/test phases and runtime validation.
 
+### Scenario-specific test handling
+
+Use measured capabilities, not hostname checks, assumed locale names or a
+test-failure allowlist:
+
+1. The pinned [environment wrapper](../lib/build_environment.py) runs inside
+   mock, selecting an actually available UTF-8 character locale. It sets
+   `LC_CTYPE` while leaving numeric/time locale settings alone. Missing locale
+   data is an explicit error, not a silently selected C locale.
+2. The wrapper reaps orphan processes as PID 1, or requests Linux child-subreaper
+   behavior when not PID 1. This allows the unchanged CLI server death-signal
+   test to distinguish dead workers from live ones rather than seeing unreaped
+   zombies. Unsupported reaping fails explicitly; leftover running children
+   are an error. No host process names are killed.
+3. The reviewed [test portability patch](../patches/php-test-portability.patch)
+   initializes the Unicode path test's character locale explicitly. PHP begins
+   in the C locale even with a UTF-8 environment; setting environment variables
+   alone is insufficient.
+4. The same patch compares the **library and reason** fields of packed OpenSSL
+   <3 errors, not their release-specific function-number field. Wrong libraries
+   or reasons still fail; the test is not changed to accept arbitrary errors.
+   It changes test expectations, not cryptographic runtime or TLS verification.
+5. The recipe preserves and pins both patches and stops on drift or conflicting
+   patch numbers. The wrapper's digest is part of staged input validation.
+   `php-tests.json` records the measured locale/reaper evidence.
+
+The compile/package command now passes through this wrapper. Python must exist
+inside the reviewed root; no interpreter, locale data or build dependencies are
+installed on the host. The driver uses available root Python 3/2.7 paths and
+reports a missing interpreter explicitly.
+
+**Failed or missing PHP test summaries now stop preparation**, even if the
+provider spec returns zero. The build keeps its diagnostic files and isolated
+root, writes `failed:php-tests`, and does not write a success manifest. There is
+no waiver for these test names. Unknown scenarios stay blocked until a bounded
+fix is reviewed and exercised. Unrelated upstream capability-based skips remain
+visible; a skipped test is not evidence that its feature passed.
+
+For a quick diagnosis, reproduce failures and nearby tests using the already
+built CLI in a disposable root before another full compilation. Use the
+provider-prepared source/test tree: running a pristine upstream test against a
+vendor-modified runtime can create a different failure, such as the custom-EC
+parameter test that this Remi spec explicitly removes during `%prep`.
+Rebuild when runtime source, configuration or final packaging changes; never
+retroactively change an existing manifest's evidence.
+
 Builds are gated to **CentOS 7 with reviewed Remi PHP profiles**. Supported
 families in this release are standard Remi PHP 8.2 and parallel Remi
 `php83-php` 8.3. Other parallel branches, AlmaLinux and Debian
@@ -287,9 +338,8 @@ Some provider specs deliberately tolerate `make test` failures. The driver
 therefore records PHP test summaries separately in `php-tests.json` and in the
 artifact report. Any nonzero failed count is recorded as `failed`, even if the
 RPM command exits zero; absent summaries are `not-reported`, never a passing
-test result. Both conditions emit a warning and leave deployment blocked. RPM
-production can complete for investigation, but must not be described as a clean
-test pass.
+test result. Both conditions stop preparation after saving diagnostics, leaving
+deployment blocked even if the provider's RPM command produced binaries.
 
 On failure, no success manifest is written. `failure.json`, `build-state`,
 `mock-root-id` and original patches remain for inspection. The failed mock root

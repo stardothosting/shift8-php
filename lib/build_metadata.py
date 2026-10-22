@@ -75,7 +75,7 @@ def profile(path, discovery, release):
     for item in inputs:
         pinned(item)
         name = meta.filename(item["name"])
-        if name in names or name in ("profile.json", "audit.json", "originals") or name == "php-{}.tar.xz".format(release["version"]):
+        if name in names or name in ("profile.json", "audit.json", "originals", "shift8-build-environment.py") or name == "php-{}.tar.xz".format(release["version"]):
             raise ValueError("Duplicate input or attempted replacement of authenticated upstream archive: " + name)
         names.add(name)
         if item["role"] not in ("spec", "source", "patch"):
@@ -110,11 +110,14 @@ def stage(profile_path, directory):
         audit.append(record)
     archive = "php-{}.tar.xz".format(release["version"])
     shutil.copyfile(os.path.join(directory, "sources", archive), os.path.join(target, archive))
+    environment = os.path.join(target, "shift8-build-environment.py")
+    shutil.copyfile(os.path.join(os.path.dirname(os.path.abspath(__file__)), "build_environment.py"), environment)
     meta.dump(dict(
         profile_sha256=meta.digest(profile_path), mock_configuration=data["mock_config"],
         trust_files=data.get("trust_files", []), inputs=audit,
         upstream=release["source"], compiler=data["compiler"],
         compatibility=discovery["compatibility"]["sha256"],
+        build_environment_sha256=meta.digest(environment),
         authentication="Operator-reviewed local packaging, not vendor-authenticated build output",
     ), os.path.join(target, "audit.json"))
     return data
@@ -153,11 +156,13 @@ def el7_profile(profile_path, directory, destination):
          "BuildRequires: pkgconfig(icu-io)   >= 74\n"
          "BuildRequires: pkgconfig(icu-uc)   >= 74\n%endif\n"),
         ("Patch49: php-8.2.0-iodbc.patch\n",
-         "Patch49: php-8.2.0-iodbc.patch\nPatch9999: shift8-php83-el7.patch\n"),
+         "Patch49: php-8.2.0-iodbc.patch\nPatch9998: shift8-php-test-portability.patch\nPatch9999: shift8-php83-el7.patch\n"),
         ("%patch -P49 -p1 -b .iodbc\n",
-         "%patch -P49 -p1 -b .iodbc\n%patch -P9999 -p1 -b .shift8-el7\n"),
+         "%patch -P49 -p1 -b .iodbc\n%patch -P9998 -p1 -b .shift8-tests\n%patch -P9999 -p1 -b .shift8-el7\n"),
     ]
-    if re.search(r"(?m)^Patch9999:", text) or any(item["name"] == "shift8-php83-el7.patch" for item in data["inputs"]):
+    if re.search(r"(?m)^Patch999[89]:", text) or any(
+        item["name"] in ("shift8-php83-el7.patch", "shift8-php-test-portability.patch") for item in data["inputs"]
+    ):
         raise ValueError("EL7 compatibility patch is already present or its name/number is in use")
     for old, new in replacements:
         if text.count(old) != 1:
@@ -194,6 +199,14 @@ def el7_profile(profile_path, directory, destination):
         review="Explicit strncmp lengths preserve ZEND_STRL semantics under EL7 fortify; "
                "OpenSSL <1.1 accessor borrows const ASN1 data, with no allocation/free or verification bypass.",
     ))
+    patch = os.path.join(os.path.dirname(patch), "php-test-portability.patch")
+    target = os.path.join(destination, "shift8-php-test-portability.patch")
+    shutil.copyfile(patch, target)
+    data["inputs"].append(dict(
+        name="shift8-php-test-portability.patch", role="patch", path=target, sha256=meta.digest(target),
+        review="OpenSSL <3 error tests retain library/reason assertions without release-specific function bits; "
+               "Unicode path test explicitly initializes the measured UTF-8 character locale. No tests are skipped.",
+    ))
     path = os.path.join(destination, "profile.json")
     meta.dump(data, path)
     profile(path, discovery, release)
@@ -206,6 +219,8 @@ def validate_staged(directory):
     path = os.path.join(target, "profile.json")
     if meta.digest(path) != audit["profile_sha256"]:
         raise ValueError("Build profile changed after review")
+    if meta.digest(os.path.join(target, "shift8-build-environment.py")) != audit["build_environment_sha256"]:
+        raise ValueError("Isolated environment wrapper changed after staging")
     data = profile(path, meta.load(os.path.join(directory, "discovery.json")), meta.load(os.path.join(directory, "release.json")))
     for item in data["inputs"]:
         if meta.digest(os.path.join(target, item["name"])) != item["sha256"]:
@@ -272,22 +287,38 @@ def failure(directory, phase, code):
     print("[shift8-php] Failure classification: " + classification, file=sys.stderr)
 
 
-def test_report(directory):
+def test_report(directory, enforcement="report"):
+    if enforcement not in ("report", "enforce"):
+        raise ValueError("Unknown PHP test reporting policy: " + enforcement)
     logs = os.path.join(directory, "build-logs")
-    summaries, failures = [], []
+    summaries, failures, environments = [], [], []
     for name in ("compile.stdout", "compile.stderr"):
         text = meta.read(os.path.join(logs, name))
+        for value in re.findall(r"(?m)^SHIFT8_BUILD_ENVIRONMENT (.+)$", text):
+            facts = json.loads(value)
+            if (
+                not isinstance(facts, dict) or facts.get("reaper") not in ("pid-1", "linux-subreaper")
+                or not isinstance(facts.get("utf8_locale"), meta.STRING)
+                or "utf8" not in facts["utf8_locale"].lower().replace("-", "")
+            ):
+                raise ValueError("Malformed isolated build environment evidence")
+            environments.append(facts)
         summaries.extend(int(value) for value in re.findall(r"(?m)^Tests failed\s*:\s*(\d+)", text))
         failures.extend(re.findall(r"(?m)^TEST FAILURE: (.+?) --\s*$", text))
         for match in re.finditer(r"(?m)^FAILED TEST SUMMARY\s*\n-+\s*\n(.*?)(?=^=+|\Z)", text, re.DOTALL):
             failures.extend(line.strip() for line in match.group(1).splitlines() if line.strip())
     status = "failed" if any(summaries) or failures else ("passed" if summaries else "not-reported")
     meta.dump(dict(status=status, failed_counts=summaries, failures=sorted(set(failures)),
+                   build_environments=environments,
                    deployable=False, policy="RPM build success is not evidence that PHP tests passed."),
               os.path.join(directory, "php-tests.json"))
     if status != "passed":
         print("[shift8-php] WARNING: PHP tests {}; inspect php-tests.json and native logs. "
               "Do not install these artifacts on production.".format(status), file=sys.stderr)
+        if enforcement == "enforce":
+            raise ValueError("PHP test gate failed: {}; fix the scenario and rerun; no test waiver is applied".format(status))
+    if enforcement == "enforce" and len(environments) != 1:
+        raise ValueError("PHP test gate requires exactly one measured isolated build environment")
 
 
 def transaction_report(directory, discovery_path):

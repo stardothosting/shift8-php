@@ -47,7 +47,7 @@ build_phase() {
 
 build_rpm() {
     local config spec item cc cxx compiler_path jobs unique input_id final_id option source_name build_support_package=''
-    local -a mock_options compiler_environment
+    local -a mock_options compiler_environment isolated_environment
     require mock
     require rpm
     require df
@@ -73,6 +73,11 @@ build_rpm() {
     printf '%s\n' "$unique" >"$BUILD_DIR/mock-root-id"
     mock_options=(-r "$config" "--uniqueext=$unique" "--resultdir=$BUILD_DIR/build-logs")
     compiler_environment=(/usr/bin/env "PATH=$compiler_path:/usr/bin:/bin" "CC=$cc" "CXX=$cxx")
+    isolated_environment=(/bin/sh -c 'for python in /usr/bin/python3 /usr/bin/python2.7 /usr/bin/python; do
+        if [ -x "$python" ]; then exec "$python" "$@"; fi
+    done
+    echo "An isolated Python interpreter is required for locale checks and orphan reaping" >&2
+    exit 3' shift8-build /builddir/build/SOURCES/shift8-build-environment.py)
     build_phase mock-version mock "${mock_options[@]}" --version
     build_phase init mock "${mock_options[@]}" --init
     if [[ -n $build_support_package ]]; then
@@ -116,10 +121,13 @@ build_rpm() {
     if grep -Ei 'Hunk #[0-9]+ .*FAILED|saving rejects to file|Reversed .*patch|with fuzz [0-9]+' "$BUILD_DIR/build-logs/prep."*; then
         die 7 "%prep reported fuzz/rejected/reversed patches. Review original versus target context; no patch will be silently dropped."
     fi
-    build_phase compile mock "${mock_options[@]}" --chroot -- "${compiler_environment[@]}" \
+    build_phase compile mock "${mock_options[@]}" --chroot -- "${isolated_environment[@]}" "${compiler_environment[@]}" \
         rpmbuild -ba --define '_topdir /builddir/build' --define '__patch /usr/bin/patch --fuzz=0' \
         --define "_smp_mflags -j$jobs" "/builddir/build/SOURCES/$spec"
-    build_meta tests "$BUILD_DIR"
+    if ! build_meta tests "$BUILD_DIR" enforce; then
+        printf '%s\n' failed:php-tests >"$BUILD_DIR/build-state"
+        die 7 "PHP tests did not pass; inspect php-tests.json and the preserved mock root. No success manifest will be written."
+    fi
     build_phase regenerate-source mock "${mock_options[@]}" --chroot -- "${compiler_environment[@]}" \
         rpmbuild -bs --define '_topdir /builddir/build' "/builddir/build/SOURCES/$spec"
     build_phase collect-binary mock "${mock_options[@]}" --copyout /builddir/build/RPMS "$BUILD_DIR/packages-binary"

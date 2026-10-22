@@ -12,6 +12,7 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, os.path.join(ROOT, "lib"))
 import metadata
 import build_metadata
+import build_environment
 
 
 class LegacyRuntimeTests(unittest.TestCase):
@@ -50,6 +51,13 @@ class LegacyRuntimeTests(unittest.TestCase):
         self.assertEqual(metadata.version_tuple("8.2.35"), (8, 2, 35))
         self.assertTrue(callable(build_metadata.profile))
         self.assertEqual(metadata.run([sys.executable, "-c", "print('legacy child')"]).stdout.strip(), "legacy child")
+
+    def test_isolated_environment_wrapper_with_real_python27(self):
+        result = metadata.run([sys.executable, os.path.join(ROOT, "lib/build_environment.py"),
+                               sys.executable, "-c", "print('legacy environment child')"])
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("SHIFT8_BUILD_ENVIRONMENT", result.stdout)
+        self.assertIn("legacy environment child", result.stdout)
 
     def test_source_index_routing_and_html_parser(self):
         source = "php83-php-8.3.8-1.el7.remi.src.rpm"
