@@ -233,7 +233,8 @@ def _replacement_authentication(path, policy):
     if re.search(r"signature[^:\n]*:\s*OK\s*$", output, re.I | re.M):
         return "signature-verified"
     _require(policy is not None and not re.search(r"signature", output, re.I)
-             and re.search(r"digest[^:\n]*:\s*OK\s*$", output, re.I | re.M),
+             and re.search(r"^\s*Header SHA1 digest:\s*OK(?:\s|$)", output, re.I | re.M)
+             and re.search(r"^\s*MD5 digest:\s*OK(?:\s|$)", output, re.I | re.M),
              "Unsigned replacement RPM requires an explicit reviewed local trust policy")
     return "reviewed-local-unsigned; checksums are not signature authentication"
 

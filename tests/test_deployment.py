@@ -315,7 +315,8 @@ class DeploymentTests(unittest.TestCase):
             if argv[1] == "--checksig":
                 signed = meta.load(argv[-1])["signed"]
                 return self.result("Header V4 RSA/SHA256 Signature, key ID deadbeef: OK\n"
-                                   if signed else "MD5 digest: OK\n")
+                                   if signed else "Header SHA1 digest: OK (4fa779866e750dab1000d31f6cdf8414ab23c10"
+                                   "7)\n    MD5 digest: OK (54969d19571849dc4785a98eade1cb1e)\n")
             if argv[1] == "-qf":
                 if argv[-1] == self.fpm:
                     return self.result("php-fpm\n")
