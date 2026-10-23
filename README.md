@@ -7,9 +7,11 @@ runtime contract rather than recovering historical vendor packaging.
 **Experimental.** Discovery, source preparation, a source-first RPM builder
 (`environment`, `build`), signed-recovery collection (`recovery`) and a managed
 transaction (`deploy`, `rollback`) are implemented. `deploy`/`rollback` are
-dry runs unless `--apply` is given with a reviewed policy file. A complete
-source-first build, disposable-root rehearsal and real swap have not yet been
-proven on a production-like host; do not treat this as a supported updater.
+dry runs unless `--apply` is given with a reviewed policy file. The full path
+(build, strict test gate, managed swap, automatic rollback) has been exercised
+end to end on one CentOS 7.9 / Remi `php83` staging host (8.3.8 to 8.3.36, all 63
+modules preserved, rollback proven twice on injected real failures). It has not
+yet been run on production or on other layouts; treat it as experimental.
 
 The goal is to update PHP without changing its package names, installation paths,
 extensions or service configuration. The current code is a starting point for
@@ -36,6 +38,45 @@ Use an exact installed CLI package name, such as `php-cli`, `php83-php-cli` or
 `php8.2-cli`. The tool finds the executable through package ownership rather than
 assuming that the default `php` command belongs to the requested installation.
 It stops if it cannot resolve a single CLI executable.
+
+## Source-first swap runbook (CentOS 7.9)
+
+Run on the target host as root, from a checkout. Installed PHP is untouched until
+the last step. Builds need about 60 minutes on one CPU (mostly compile and tests).
+
+```sh
+./shift8-php environment php83-php-cli --environment-dir=/root/build-env --openssl-version=3.5.9 --jobs=1
+./shift8-php prepare php83-php-cli --source-first --artifact-dir=/var/lib/shift8-php     # prints manifest path
+./shift8-php recovery php83-php-cli --recovery-dir=/root/recovery --recovery-repos=remi-safe
+./shift8-php build php83-php-cli --artifact-dir=/var/lib/shift8-php --manifest=MANIFEST \
+  --build-environment=/root/build-env/environment.json
+./shift8-php deploy php83-php-cli --manifest=BUILD_MANIFEST --deployment-policy=policy.json          # dry run
+./shift8-php deploy php83-php-cli --manifest=BUILD_MANIFEST --deployment-policy=policy.json --apply
+```
+
+Prerequisites: `mock` (EPEL), `git`, enough RAM (use swap on small hosts), and
+`/var/lib/shift8-php` owned by root with mode 0700. The reviewed policy needs the
+exact package, a new empty `state_dir`, the `recovery_dir`, the FPM `service`
+(unit, executable, `systemctl` stop/restart argv, listeners) and application
+`health_commands`. [lib/fcgi_probe.py](lib/fcgi_probe.py) speaks FastCGI directly to
+each pool and runs [tests/health-probe.php](tests/health-probe.php), so health
+checks work even when no web server is running; install the probe script somewhere
+the pool users can read, not under the 0700 artifact store. Unsigned local RPMs
+need a `replacement_trust` entry bound to the manifest SHA-256.
+
+What the build enforces: the exact installed compiled directory constants
+(`PHP_EXTENSION_DIR`, `PHP_LIBDIR`, ...) are reproduced and verified from the
+staged binary; every binary that needs the private OpenSSL carries the final
+run-path (build-time paths are rewritten and rejected); the PHP suite must pass
+with no failures. Four upstream tests are guarded by capability checks on EL7
+(libcurl 7.29, SQLite 3.7, old kernel, IPv6 multicast); see
+`patches/php-test-portability.patch`.
+
+Known limits: PECL extensions are retained, not rebuilt; the private OpenSSL 3.5
+coexists with system OpenSSL 1.0.2 in one process without issue on the tested host
+but this is not proven for every extension; layouts other than the Remi `php83`
+parallel or system layout stay blocked; there is no automated cutover or
+retirement.
 
 ## Getting started
 
