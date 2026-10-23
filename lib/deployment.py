@@ -208,7 +208,8 @@ def _package(path):
 
 def _signature(path):
     output = _rpm("--checksig", "--verbose", "--", path)["stdout"]
-    _require(not re.search(r"NOKEY|NOTTRUSTED|NOT OK|BAD|unsigned", output, re.I)
+    _require(not re.search(r"\b(?:NOKEY|NOTTRUSTED|NOT OK|BAD|MISSING KEYS|UNTRUSTED)\b", output)
+             and not re.search(r"unsigned", output, re.I)
              and re.search(r"signature[^:\n]*:\s*OK\s*$", output, re.I | re.M),
              "RPM needs a signature verified by the local RPM trust database: " + path)
 
@@ -228,7 +229,7 @@ def _replacement_policy(policy, manifest_sha256):
 
 def _replacement_authentication(path, policy):
     output = _rpm("--checksig", "--verbose", "--", path)["stdout"]
-    _require(not re.search(r"NOKEY|NOTTRUSTED|NOT OK|BAD", output, re.I),
+    _require(not re.search(r"\b(?:NOKEY|NOTTRUSTED|NOT OK|BAD|MISSING KEYS|UNTRUSTED)\b", output),
              "Replacement RPM integrity/signature verification failed")
     if re.search(r"signature[^:\n]*:\s*OK\s*$", output, re.I | re.M):
         return "signature-verified"
