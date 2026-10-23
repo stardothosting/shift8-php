@@ -45,6 +45,8 @@ discover() {
     "$path" -i 2>>"$LOG_FILE" | meta phpinfo >"$WORK/phpinfo.json"
     capture "$WORK/modules.txt" "$path" -m
     capture "$WORK/ini.txt" "$path" --ini
+    # Optional here; the source-first contract blocks when the constants are missing.
+    capture "$WORK/paths.txt" "$path" -n -r "$COMPILED_PATHS_PHP" || : >"$WORK/paths.txt"
     if (( ${SOURCE_FIRST:-0} )); then
         meta snapshot "$WORK" "$PACKAGE" source-first >"$WORK/discovery.json"
         mkdir "$WORK/fpm-details"

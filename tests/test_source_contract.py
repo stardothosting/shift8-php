@@ -32,6 +32,12 @@ def snapshot(parallel=False):
         runtime=dict(executable=prefix + "/bin/php", version="8.3.36", branch="8.3",
                      php_api="20230831", module_api="20230831", zend_extension_api="420230831", zts=False,
                      extension_dir=prefix + "/lib64/php/modules",
+                     compiled_paths=dict(
+                         PHP_PREFIX=prefix, PHP_BINDIR=prefix + "/bin", PHP_LIBDIR=prefix + "/lib64/php",
+                         PHP_DATADIR=prefix + "/share", PHP_SYSCONFDIR=configuration,
+                         PHP_EXTENSION_DIR=prefix + "/lib64/php/modules", PHP_CONFIG_FILE_PATH=configuration,
+                         PHP_CONFIG_FILE_SCAN_DIR=configuration + "/php.d", PHP_MANDIR=prefix + "/share/man",
+                         PHP_LOCALSTATEDIR="/var" if not parallel else "/var/opt/remi/php83"),
                      loaded_extensions=["Core", "PDO", "openssl", "libxml", "mbstring", "igbinary", "Zend OPcache"],
                      build=info),
         family=dict(source_name=name, fpm_binaries=[prefix + "/sbin/php-fpm"], packages=[

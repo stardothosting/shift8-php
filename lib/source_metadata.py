@@ -116,6 +116,14 @@ def contract(discovery, release):
             block("configuration-path", "Cannot normalize the compiled " + key + ".", value)
         else:
             paths[key] = absolute(value)
+    compiled = runtime.get("compiled_paths")
+    required_constants = ("PHP_LIBDIR", "PHP_DATADIR", "PHP_SYSCONFDIR", "PHP_MANDIR", "PHP_LOCALSTATEDIR", "PHP_EXTENSION_DIR")
+    if not isinstance(compiled, dict) or any(not str(compiled.get(key, "")).startswith("/") for key in required_constants):
+        block("compiled-paths", "Installed compiled directory constants were not captured; rerun discovery.", compiled)
+    elif compiled["PHP_EXTENSION_DIR"] != paths["extension_dir"]:
+        block("compiled-paths", "Compiled extension directory differs from phpinfo extension_dir.", compiled["PHP_EXTENSION_DIR"])
+    else:
+        paths["compiled"] = {key: value for key, value in sorted(compiled.items())}
     loaded = build.get("Loaded Configuration File")
     if loaded and loaded != "(none)":
         paths["loaded_ini"] = absolute(loaded)

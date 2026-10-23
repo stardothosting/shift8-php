@@ -26,6 +26,26 @@ class SourceBuildTests(TemporaryTest):
         self.assertEqual(len(set(arguments)), len(arguments))
         self.assertFalse(plan["deployable"])
 
+    def test_installed_compiled_directory_contract_is_reproduced(self):
+        data = snapshot(parallel=True)
+        arguments, _ = source_build.options(data)
+        compiled = data["runtime"]["compiled_paths"]
+        self.assertIn("--libdir=" + compiled["PHP_LIBDIR"], arguments)
+        self.assertIn("--datadir=" + compiled["PHP_DATADIR"], arguments)
+        self.assertIn("--mandir=" + compiled["PHP_MANDIR"], arguments)
+        self.assertIn("--localstatedir=" + compiled["PHP_LOCALSTATEDIR"], arguments)
+        self.assertIn("--sysconfdir=" + compiled["PHP_SYSCONFDIR"], arguments)
+
+    def test_missing_or_inconsistent_compiled_paths_block_the_build(self):
+        data = snapshot()
+        del data["runtime"]["compiled_paths"]
+        with self.assertRaisesRegex(ValueError, "compiled-paths"):
+            source_build.options(data)
+        data = snapshot()
+        data["runtime"]["compiled_paths"]["PHP_EXTENSION_DIR"] = "/usr/lib64/extensions/no-debug-non-zts-20230831"
+        with self.assertRaisesRegex(ValueError, "compiled-paths"):
+            source_build.options(data)
+
     def test_mysqli_preserves_mysqlnd_selection(self):
         data = snapshot()
         data["runtime"]["loaded_extensions"].extend(["mysqli", "pdo_mysql", "mysqlnd"])
@@ -137,3 +157,8 @@ class SourceBuildTests(TemporaryTest):
         self.assertNotIn("sed -i", spec)
         self.assertIn("HARNESS_JOBS=2", spec)
         self.assertIn("/opt/shift8-php/deps/openssl-3.5.9/", spec)
+        self.assertIn("export EXTENSION_DIR=", spec)
+        self.assertIn("chrpath -r", spec)
+        self.assertIn("-Wl,-rpath=/opt/shift8-php/deps/openssl-3.5.9/lib64", spec)
+        self.assertIn("diff %{_builddir}/compiled-paths.expected %{_builddir}/compiled-paths.actual", spec)
+        self.assertIn("printf '%%s\\n' 'PHP_BINDIR=", spec)

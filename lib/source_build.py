@@ -16,6 +16,13 @@ import source_metadata as source
 import build_metadata as build
 
 
+COMPILED_PATHS_PHP = (
+    'foreach (["PHP_PREFIX","PHP_BINDIR","PHP_LIBDIR","PHP_DATADIR","PHP_SYSCONFDIR","PHP_EXTENSION_DIR",'
+    '"PHP_CONFIG_FILE_PATH","PHP_CONFIG_FILE_SCAN_DIR","PHP_MANDIR","PHP_LOCALSTATEDIR"] as $c) '
+    'echo $c, "=", defined($c) ? constant($c) : "-", "\\n";'
+)
+
+
 def initialize(manifest_path, package, destination):
     meta.verify_manifest(manifest_path)
     manifest = meta.load(manifest_path)
@@ -67,11 +74,13 @@ def options(discovery):
         raise ValueError("Source build contract blocked: " + json.dumps(plan["blockers"]))
     if runtime["branch"] != "8.3":
         raise ValueError("Source-first binary builds are currently gated to PHP 8.3")
+    compiled = plan["layout"]["paths"]["compiled"]
     result = [
         "--disable-all", "--enable-cli", "--enable-cgi", "--disable-phpdbg", "--without-pear",
         "--prefix=" + prefix, "--exec-prefix=" + prefix, "--bindir=" + prefix + "/bin",
-        "--sbindir=" + prefix + "/sbin", "--libdir=" + prefix + "/lib64", "--with-libdir=lib64",
-        "--sysconfdir=" + info["Configuration File (php.ini) Path"],
+        "--sbindir=" + prefix + "/sbin", "--libdir=" + compiled["PHP_LIBDIR"], "--with-libdir=lib64",
+        "--datadir=" + compiled["PHP_DATADIR"], "--mandir=" + compiled["PHP_MANDIR"],
+        "--localstatedir=" + compiled["PHP_LOCALSTATEDIR"], "--sysconfdir=" + compiled["PHP_SYSCONFDIR"],
         "--with-config-file-path=" + info["Configuration File (php.ini) Path"],
         "--with-config-file-scan-dir=" + info["Scan this dir for additional .ini files"],
         "--enable-filter", "--with-libxml",
@@ -192,7 +201,7 @@ def generate(manifest_path, environment_path, destination):
     meta.dump(dict(files=sorted(updated_files), private_prefix=prefix), payload)
     profile["inputs"].append(dict(name="payload.json", path=payload, sha256=meta.digest(payload), role="source"))
     # BuildRequires are capabilities, not guessed repository package names.
-    requires = ["gcc", "gcc-c++", "make", "binutils", "chrpath", "perl", "perl(Time::Piece)", "perl(IPC::Cmd)", "perl(Test::More)",
+    requires = ["gcc", "gcc-c++", "make", "binutils", "chrpath", "diffutils", "perl", "perl(Time::Piece)", "perl(IPC::Cmd)", "perl(Test::More)",
                 "perl(Test::Harness)", "perl(Math::BigInt)", "perl(Digest::SHA)",
                 "pkgconfig", "systemd-devel", "libacl-devel",
                 "pkgconfig(libxml-2.0)", "pkgconfig(zlib)"]
@@ -267,6 +276,7 @@ def generate(manifest_path, environment_path, destination):
         "export OPENSSL_CFLAGS=-I%{_builddir}/openssl-stage" + prefix + "/include",
         "export OPENSSL_LIBS='-L%{_builddir}/openssl-stage" + prefix + "/lib64 -lssl -lcrypto -Wl,-rpath," + prefix + "/lib64'",
         "export LD_LIBRARY_PATH=%{_builddir}/openssl-stage" + prefix + "/lib64",
+        "export EXTENSION_DIR=" + discovery["runtime"]["extension_dir"],
         "/usr/bin/python %{SOURCE3} %{SOURCE2}",
         "make -j" + str(jobs), "",
         "%install", "rm -rf %{buildroot}",
@@ -298,6 +308,12 @@ def generate(manifest_path, environment_path, destination):
         '  if [ "$stale" != "0" ]; then chrpath -r "' + prefix + '/lib64" "$file"; fi',
         "done",
         "/usr/bin/python %{SOURCE4} %{buildroot} %{SOURCE5}",
+        # The staged binary must report exactly the compiled directory contract of the installed runtime.
+        "LD_LIBRARY_PATH=%{_builddir}/openssl-stage" + prefix + "/lib64 %{buildroot}" + discovery["runtime"]["executable"] +
+        " -n -r '" + COMPILED_PATHS_PHP + "' > %{_builddir}/compiled-paths.actual",
+        "printf '%%s\\n' " + " ".join("'" + key + "=" + safe(value) + "'" for key, value in sorted(
+            plan["layout"]["paths"]["compiled"].items())) + " > %{_builddir}/compiled-paths.expected",
+        "diff %{_builddir}/compiled-paths.expected %{_builddir}/compiled-paths.actual",
         "",
         "%check", "export LC_CTYPE=${LC_CTYPE:?Measured UTF-8 locale required}",
         "export NO_INTERACTION=1 REPORT_EXIT_STATUS=1 SKIP_ONLINE_TESTS=1 SKIP_IO_CAPTURE_TESTS=1",

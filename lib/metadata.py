@@ -359,6 +359,13 @@ def snapshot(directory, requested, mode="strict"):
     platform = distribution()
     if mode == "source-first" and os.path.isfile("/etc/centos-release"):
         platform["point_release_evidence"] = read("/etc/centos-release").strip()
+    compiled_paths = {}
+    paths_file = os.path.join(directory, "paths.txt")
+    if os.path.isfile(paths_file):
+        for line in read(paths_file).splitlines():
+            key, separator, value = line.partition("=")
+            if separator and re.match(r"PHP_[A-Z_]+\Z", key) and (value == "-" or os.path.isabs(value)):
+                compiled_paths[key] = value
     result = dict(
         schema_version=1, requested_package=requested, package_manager=data["manager"],
         distribution=platform, architecture=cli["architecture"],
@@ -367,7 +374,7 @@ def snapshot(directory, requested, mode="strict"):
             branch=".".join(runtime_version.split(".")[:2]),
             php_api=info["PHP API"], module_api=info["PHP Extension"],
             zend_extension_api=info["Zend Extension"], zts=info["Thread Safety"] == "enabled",
-            extension_dir=extension_dir, loaded_extensions=sorted(set(modules)),
+            extension_dir=extension_dir, compiled_paths=compiled_paths, loaded_extensions=sorted(set(modules)),
             ini_report=read(os.path.join(directory, "ini.txt")).splitlines(), build=info,
         ),
         family=dict(

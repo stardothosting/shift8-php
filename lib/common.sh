@@ -72,6 +72,9 @@ cleanup() {
     exit "$code"
 }
 
+# Compiled-in directory constants of the installed runtime; the build must reproduce all of them.
+COMPILED_PATHS_PHP='foreach (["PHP_PREFIX","PHP_BINDIR","PHP_LIBDIR","PHP_DATADIR","PHP_SYSCONFDIR","PHP_EXTENSION_DIR","PHP_CONFIG_FILE_PATH","PHP_CONFIG_FILE_SCAN_DIR","PHP_MANDIR","PHP_LOCALSTATEDIR"] as $c) echo $c, "=", defined($c) ? constant($c) : "-", "\n";'
+
 capture() {
     local destination=$1
     shift
