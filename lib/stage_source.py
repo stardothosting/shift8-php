@@ -34,6 +34,10 @@ def verify_runtime_paths(root, private):
             needs = re.search(r"Shared library: \[lib(?:ssl|crypto)\.so\.3\]", output) is not None
             if needs and library not in paths and not relative.startswith(private + "/"):
                 raise ValueError("Missing private OpenSSL runtime path in " + relative)
+            if needs:
+                for soname in ("libssl.so.3", "libcrypto.so.3"):
+                    if not os.path.exists(root + library + "/" + soname):
+                        raise ValueError("Private OpenSSL library is not in the staged payload: " + soname)
             if needs and relative.startswith(private + "/") and library not in paths and "libssl.so" in relative:
                 raise ValueError("Private libssl lacks its own runtime path")
 

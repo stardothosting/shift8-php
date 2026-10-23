@@ -77,8 +77,18 @@ class RuntimePathTests(TemporaryTest):
 
     def test_final_private_runtime_path_is_accepted(self):
         root = self.elf()
+        library = root / "opt/shift8-php/deps/openssl-3.5.9/lib64"
+        library.mkdir(parents=True)
+        for name in ("libssl.so.3", "libcrypto.so.3"):
+            (library / name).write_text("x")
         good = self.NEEDS + " 0xf (RPATH) Library rpath: [" + self.PRIVATE + "/lib64]\n"
         with self.readelf(good):
+            stage_source.verify_runtime_paths(str(root), self.PRIVATE)
+
+    def test_missing_private_library_in_payload_is_rejected(self):
+        root = self.elf()
+        good = self.NEEDS + " 0xf (RPATH) Library rpath: [" + self.PRIVATE + "/lib64]\n"
+        with self.readelf(good), self.assertRaisesRegex(ValueError, "not in the staged payload"):
             stage_source.verify_runtime_paths(str(root), self.PRIVATE)
 
     def test_private_libssl_needs_its_own_runtime_path(self):
