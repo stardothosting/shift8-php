@@ -143,10 +143,15 @@ def _rpm(*arguments):
     return _checked([os.path.abspath(executable)] + list(arguments))
 
 
-def _path(path):
+def _lexical(path):
     _require(isinstance(path, meta.STRING) and os.path.isabs(path)
              and os.path.normpath(path) == path and path != "/"
              and not any(c in path for c in "\x00\t\r\n"), "Unsafe absolute path")
+    return path
+
+
+def _path(path):
+    _lexical(path)
     current = path
     while current != "/":
         _require(not os.path.islink(current), "Symlink path is unsupported: " + current)
@@ -257,7 +262,9 @@ def _file_flags(path):
         fields = line.split("\t")
         _require(len(fields) == 2 and fields[1].isdigit(), "Malformed RPM file flags")
         name, flags = fields[0], int(fields[1])
-        _path(name)
+        # Packaged aliases (for example an Apache module symlink) are legitimate; only configurations
+        # that are backed up and restored must be free of symlinks.
+        _path(name) if flags & 1 else _lexical(name)
         if flags & 1:
             _require(flags & 16, "Replacement configuration must be %config(noreplace): " + name)
         _require(name not in result, "Duplicate RPM file path")
