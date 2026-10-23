@@ -31,3 +31,17 @@
  /*
  #vim: set fileencoding=utf-8
  #vim: set encoding=utf-8
+--- a/ext/xsl/tests/bug71540.phpt
++++ b/ext/xsl/tests/bug71540.phpt
+@@ -53,9 +53,9 @@
+ 
+ Warning: XSLTProcessor::transformToXml(): Unregistered function in %sbug71540.php on line %d
+ 
+-Warning: XSLTProcessor::transformToXml(): Stack usage error in %sbug71540.php on line %d
++Warning: XSLTProcessor::transformToXml(): Stack usage err%sr in %sbug71540.php on line %d
+ 
+-Warning: XSLTProcessor::transformToXml(): Stack usage error in %sbug71540.php on line %d
++Warning: XSLTProcessor::transformToXml(): Stack usage err%sr in %sbug71540.php on line %d
+ 
+ Warning: XSLTProcessor::transformToXml(): Handler name must be a string in %sbug71540.php on line %d
+ 
