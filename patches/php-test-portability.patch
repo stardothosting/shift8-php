@@ -45,3 +45,100 @@
  
  Warning: XSLTProcessor::transformToXml(): Handler name must be a string in %sbug71540.php on line %d
  
+--- a/ext/curl/tests/curl_copy_handle_xferinfo.phpt
++++ b/ext/curl/tests/curl_copy_handle_xferinfo.phpt
+@@ -2,6 +2,10 @@
+ Test curl_copy_handle() with CURLOPT_XFERINFOFUNCTION
+ --EXTENSIONS--
+ curl
++--SKIPIF--
++<?php
++if (!defined("CURLOPT_XFERINFOFUNCTION")) die("skip libcurl lacks CURLOPT_XFERINFOFUNCTION (requires 7.32+)");
++?>
+ --FILE--
+ <?php
+   include 'server.inc';
+--- a/ext/curl/tests/refcounted_return_must_not_leak.phpt
++++ b/ext/curl/tests/refcounted_return_must_not_leak.phpt
+@@ -2,6 +2,10 @@
+ Returning refcounted value from callback must not leak
+ --EXTENSIONS--
+ curl
++--SKIPIF--
++<?php
++if (!defined("CURLOPT_XFERINFOFUNCTION")) die("skip libcurl lacks CURLOPT_XFERINFOFUNCTION (requires 7.32+)");
++?>
+ --FILE--
+ <?php
+ include 'server.inc';
+--- a/ext/pcntl/tests/pcntl_unshare_01.phpt
++++ b/ext/pcntl/tests/pcntl_unshare_01.phpt
+@@ -7,7 +7,12 @@
+ <?php
+ if (!function_exists("pcntl_unshare")) die("skip pcntl_unshare is not available");
+ if (!defined("CLONE_NEWUSER")) die("skip flag unavailable");
+-if (@pcntl_unshare(CLONE_NEWUSER) == false && pcntl_get_last_error() == PCNTL_EPERM) {
++try {
++    $unshared = @pcntl_unshare(CLONE_NEWUSER);
++} catch (ValueError $e) {
++    die("skip CLONE_NEWUSER is not accepted by this build environment");
++}
++if ($unshared == false && pcntl_get_last_error() == PCNTL_EPERM) {
+     die("skip Insufficient privileges to use CLONE_NEWUSER");
+ }
+ if (getenv("SKIP_REPEAT")) die("skip cannot be repeated");
+--- a/ext/sockets/tests/mcast_ipv6_recv.phpt
++++ b/ext/sockets/tests/mcast_ipv6_recv.phpt
+@@ -30,6 +30,11 @@
+ if ($r === false) {
+     die('skip unable to send multicast packet.');
+ }
++$read = [$s];
++$write = $except = null;
++if (socket_select($read, $write, $except, 0, 500000) < 1) {
++    die('skip IPv6 multicast loopback is not delivered in this environment.');
++}
+ 
+ if (!defined("MCAST_JOIN_SOURCE_GROUP"))
+     die('skip source operations are unavailable');
+--- a/ext/sqlite3/tests/sqlite3_38_extended_error.phpt
++++ b/ext/sqlite3/tests/sqlite3_38_extended_error.phpt
+@@ -27,7 +27,7 @@
+ First Error Code: 0
+ Inserting second time which should fail
+ 
+-Warning: SQLite3::query(): Unable to execute statement: UNIQUE constraint failed: dog.id in %s on line %d
++Warning: SQLite3::query(): Unable to execute statement: %s in %s on line %d
+ Second Error Code: 19
+ Second Extended Error Code: 1555
+ Closing database
+--- a/ext/sqlite3/tests/sqlite3_39_toggleExtended.phpt
++++ b/ext/sqlite3/tests/sqlite3_39_toggleExtended.phpt
+@@ -31,11 +31,11 @@
+ First Error Code: 0
+ Inserting second time which should fail
+ 
+-Warning: SQLite3::query(): Unable to execute statement: UNIQUE constraint failed: dog.id in %s on line %d
++Warning: SQLite3::query(): Unable to execute statement: %s in %s on line %d
+ Second Error Code: 19
+ Toggling extended error codes and re-inserting a third time
+ 
+-Warning: SQLite3::query(): Unable to execute statement: UNIQUE constraint failed: dog.id in %s on line %d
++Warning: SQLite3::query(): Unable to execute statement: %s in %s on line %d
+ Third (Extended) Error Code: 1555
+ Closing database
+ bool(true)
+--- a/tests/basic/oom_rfc1867.inc
++++ b/tests/basic/oom_rfc1867.inc
+@@ -51,6 +51,11 @@
+         '-d', 'html_errors=0',
+     ];
+ 
++    /* A shared mbstring is not inherited by the -n child process. */
++    if (extension_loaded("mbstring") && is_file(ini_get("extension_dir") . "/mbstring.so")) {
++        array_push($cmd, "-d", "extension_dir=" . ini_get("extension_dir"), "-d", "extension=mbstring.so");
++    }
++
+     foreach ($extraIni as $ini) {
+         $cmd[] = '-d';
+         $cmd[] = $ini;
