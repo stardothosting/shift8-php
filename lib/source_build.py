@@ -296,7 +296,20 @@ def generate(manifest_path, environment_path, destination):
         "%check", "export LC_CTYPE=${LC_CTYPE:?Measured UTF-8 locale required}",
         "export NO_INTERACTION=1 REPORT_EXIT_STATUS=1 SKIP_ONLINE_TESTS=1 SKIP_IO_CAPTURE_TESTS=1",
         "export LD_LIBRARY_PATH=%{_builddir}/openssl-stage" + prefix + "/lib64",
-        "make test TESTS='-j" + str(jobs) + "'",
+        # The Makefile loads shared modules alphabetically; mysqli/pdo_* need their providers loaded first.
+        'extensions=""',
+        "for first in mysqlnd pdo dom; do",
+        '  if [ -f modules/$first.so ]; then extensions="$extensions -d extension=$first.so"; fi',
+        "done",
+        "for module in modules/*.so; do",
+        "  name=$(basename $module)",
+        "  case $name in",
+        "    mysqlnd.so|pdo.so|dom.so|dl_test.so) ;;",
+        '    opcache.so) extensions="$extensions -d zend_extension=$PWD/modules/opcache.so" ;;',
+        '    *) extensions="$extensions -d extension=$name" ;;',
+        "  esac",
+        "done",
+        "make test PHP_TEST_SHARED_EXTENSIONS=\"$extensions\" TESTS='-j" + str(jobs) + "'",
     ])
     # Package only the exact runtime/update surface; preserve unrelated owned paths as ghost entries.
     for item in packages:
