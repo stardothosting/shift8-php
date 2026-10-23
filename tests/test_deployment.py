@@ -297,8 +297,9 @@ class DeploymentTests(unittest.TestCase):
                 return self.result()
             if name == "touch":
                 status = os.stat(argv[-1])
+                self.assertIn(argv[2], ("-a", "-m"), "coreutils 8.22 only accepts -a/-m here")
                 value = float(argv[3].split("=@", 1)[1])
-                os.utime(argv[-1], (value, status.st_mtime) if argv[2] == "--access"
+                os.utime(argv[-1], (value, status.st_mtime) if argv[2] == "-a"
                          else (status.st_atime, value))
                 return self.result()
             self.fail("Unexpected native tool " + name)

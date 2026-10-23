@@ -17,7 +17,7 @@ Use a trusted, already reviewed isolated-rpm-build manifest. Its checksums are
 integrity evidence, not authentication. RPM scriptlets and application probes
 are trusted executable code. Symlinked configurations, non-systemd services,
 unbounded package/configuration sets, and automatic dependency changes are
-deliberately unsupported. GNU cp/stat/touch plus getfacl must be available
+deliberately unsupported. GNU cp/stat/touch (coreutils 8.22 option spellings) plus getfacl must be available
 to verify exact configuration bytes, ownership, modes, timestamps, ACLs and all
 xattrs (including SELinux labels). Xattrs use os APIs or descriptor-based libc
 calls through ctypes on Python 2; getfattr/setfattr are not required. Attribute
@@ -772,7 +772,7 @@ def _preserve_config(source, destination, digest, security):
         finally:
             # Preserve the source snapshot even when cp partially fails or loses metadata.
             times = security["stat"].rstrip("\n").split("\t")
-            for kind, value in (("--access", times[4]), ("--modify", times[5])):
+            for kind, value in (("-a", times[4]), ("-m", times[5])):
                 _path(source)
                 _native("touch", "--no-dereference", kind, "--date=@" + value, "--", source)
         _require(_config_digest(pending) == digest and _config_metadata(pending) == security,
