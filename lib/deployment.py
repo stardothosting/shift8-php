@@ -768,7 +768,7 @@ def _preserve_config(source, destination, digest, security):
         descriptor = os.open(pending, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600)
         os.close(descriptor)
         try:
-            _native("cp", "--preserve=all", "--reflink=never", "--no-dereference", "--", source, pending)
+            _native("cp", "--preserve=all", "--no-dereference", "--", source, pending)
         finally:
             # Preserve the source snapshot even when cp partially fails or loses metadata.
             times = security["stat"].rstrip("\n").split("\t")

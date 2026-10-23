@@ -281,7 +281,7 @@ class DeploymentTests(unittest.TestCase):
             if name == "getfacl":
                 return self.result(self.security.get(argv[-1], {}).get("acl", "user::rw-\ngroup::---\nother::---\n"))
             if name == "cp":
-                self.assertEqual(argv[1:-2], ["--preserve=all", "--reflink=never", "--no-dereference", "--"])
+                self.assertEqual(argv[1:-2], ["--preserve=all", "--no-dereference", "--"])
                 source, destination = argv[-2:]
                 self.assertEqual(stat.S_IMODE(os.stat(os.path.dirname(destination)).st_mode), 0o700)
                 before = os.stat(source)
