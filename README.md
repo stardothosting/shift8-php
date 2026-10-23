@@ -4,10 +4,12 @@ Inspect PHP installations, find releases in the same PHP branch, and prepare
 authenticated source inputs. The new CentOS 7.9 route plans from the installed
 runtime contract rather than recovering historical vendor packaging.
 
-**This tool does not install PHP updates.** Discovery and source preparation
-are implemented, including source-first contracts. There is an experimental
-vendor-profile RPM build driver; a source-first builder and managed deployment
-are not implemented yet. `deploy` and `rollback` are disabled.
+**Experimental.** Discovery, source preparation, a source-first RPM builder
+(`environment`, `build`), signed-recovery collection (`recovery`) and a managed
+transaction (`deploy`, `rollback`) are implemented. `deploy`/`rollback` are
+dry runs unless `--apply` is given with a reviewed policy file. A complete
+source-first build, disposable-root rehearsal and real swap have not yet been
+proven on a production-like host; do not treat this as a supported updater.
 
 The goal is to update PHP without changing its package names, installation paths,
 extensions or service configuration. The current code is a starting point for
@@ -24,8 +26,11 @@ that workflow, not a replacement for a distribution's package updater.
 | `prepare <package> --source-first` | Save the installed contract and authenticated upstream PHP archive, without historical packaging or compilation. |
 | `prepare <package> --build-profile=...` | Attempt an isolated mock build using a supplied, reviewed spec, patches and configuration. |
 | `check <package> --manifest=...` | Verify saved artifact checksums and compare the recorded installation fingerprint with this host. |
-| `deploy <package>` | Not implemented; exits without installing anything. |
-| `rollback <package>` | Not implemented; exits without changing anything. |
+| `environment <package> --environment-dir=DIR --openssl-version=3.5.N` | Generate and pin the mock config and private OpenSSL 3.5 LTS source for a source-first build. |
+| `build <package> --manifest=... --build-environment=...` | Build RPMs in an isolated mock root from the source-first manifest: private OpenSSL, array-validated configure, strict PHP test gate. |
+| `recovery <package>` | Download and signature-verify the exact installed NEVRA RPMs needed for rollback. |
+| `deploy <package> --deployment-policy=...` | Dry-run by default; `--apply` performs the managed RPM transaction with automatic rollback. |
+| `rollback <package> --deployment-policy=...` | Dry-run by default; `--apply` restores the recorded recovery set. |
 
 Use an exact installed CLI package name, such as `php-cli`, `php83-php-cli` or
 `php8.2-cli`. The tool finds the executable through package ownership rather than
@@ -47,15 +52,16 @@ For the source-first CentOS 7.9 route:
 Use `php-cli` for the system layout. `plan` prints JSON; exit zero means that
 inspection/plan generation completed, **not** that the installation can be
 updated. Read `status`, `blockers`, `dependencies` and `required_checks`.
-`build_ready` and `deployable` remain false. Unknown layouts, Apache modules,
-unknown extensions, incomplete library inventory and mismatched FPM facts are
+`build_ready` and `deployable` remain false. Unknown layouts,
+unknown extensions, nonstandard Apache module layouts, incomplete library inventory and mismatched FPM facts are
 reported instead of silently disabled. An unrecognized system is never claimed
 to be a supported build.
 
 This route does not need a historical SRPM, source map or handwritten final
-spec/profile. It does not yet build private libraries or produce/install
-replacement RPMs. The existing vendor-profile route below remains available;
-it is not selected automatically by source-first planning.
+spec/profile. `environment` and `build` then produce replacement RPMs (private
+OpenSSL 3.5 under `/opt/shift8-php/deps`, Apache `mod_php` when installed).
+The existing vendor-profile route below remains available; it is not selected
+automatically by source-first planning.
 
 Legacy discovery/preparation:
 
