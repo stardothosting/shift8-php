@@ -93,5 +93,6 @@ class RuntimePathTests(TemporaryTest):
 
     def test_private_libssl_needs_its_own_runtime_path(self):
         root = self.elf("opt/shift8-php/deps/openssl-3.5.9/lib64/libssl.so.3")
+        (root / "opt/shift8-php/deps/openssl-3.5.9/lib64/libcrypto.so.3").write_text("x")
         with self.readelf(self.NEEDS), self.assertRaisesRegex(ValueError, "Private libssl"):
             stage_source.verify_runtime_paths(str(root), self.PRIVATE)
