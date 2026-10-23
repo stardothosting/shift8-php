@@ -192,7 +192,7 @@ def generate(manifest_path, environment_path, destination):
     meta.dump(dict(files=sorted(updated_files), private_prefix=prefix), payload)
     profile["inputs"].append(dict(name="payload.json", path=payload, sha256=meta.digest(payload), role="source"))
     # BuildRequires are capabilities, not guessed repository package names.
-    requires = ["gcc", "gcc-c++", "make", "perl", "perl(Time::Piece)", "perl(IPC::Cmd)", "perl(Test::More)",
+    requires = ["gcc", "gcc-c++", "make", "binutils", "chrpath", "perl", "perl(Time::Piece)", "perl(IPC::Cmd)", "perl(Test::More)",
                 "perl(Test::Harness)", "perl(Math::BigInt)", "perl(Digest::SHA)",
                 "pkgconfig", "systemd-devel", "libacl-devel",
                 "pkgconfig(libxml-2.0)", "pkgconfig(zlib)"]
@@ -260,7 +260,7 @@ def generate(manifest_path, environment_path, destination):
         "", "%build",
         "tar -xzf %{SOURCE1} -C ..",
         "pushd ../openssl-" + openssl["version"],
-        "./Configure linux-x86_64 --prefix=" + prefix + " --openssldir=/etc/pki/tls --libdir=lib64 shared",
+        "./Configure linux-x86_64 --prefix=" + prefix + " --openssldir=/etc/pki/tls --libdir=lib64 shared -Wl,-rpath=" + prefix + "/lib64",
         "make -j" + str(jobs), "make test HARNESS_JOBS=" + str(jobs), "make install_sw DESTDIR=%{_builddir}/openssl-stage",
         "popd",
         "export PKG_CONFIG_PATH=%{_builddir}/openssl-stage" + prefix + "/lib64/pkgconfig",
@@ -291,6 +291,12 @@ def generate(manifest_path, environment_path, destination):
         "mkdir -p %{buildroot}" + discovery["runtime"]["extension_dir"],
         "find %{buildroot} -type f -name '*.so' -path '*/extensions/*' -exec cp {} %{buildroot}" +
         discovery["runtime"]["extension_dir"] + "/ \\;",
+        # PHP records the build-time staging copy of OpenSSL as RPATH; point every binary at the final private prefix.
+        "for file in $(find %{buildroot} -type f); do",
+        '  readelf -h "$file" >/dev/null 2>&1 || continue',
+        "  stale=$(readelf -d \"$file\" 2>/dev/null | grep -c 'R\\(UN\\)\\?PATH.*%{_builddir}/openssl-stage' || true)",
+        '  if [ "$stale" != "0" ]; then chrpath -r "' + prefix + '/lib64" "$file"; fi',
+        "done",
         "/usr/bin/python %{SOURCE4} %{buildroot} %{SOURCE5}",
         "",
         "%check", "export LC_CTYPE=${LC_CTYPE:?Measured UTF-8 locale required}",

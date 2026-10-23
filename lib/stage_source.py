@@ -6,7 +6,36 @@ import io
 import json
 import os
 import sys
+import re
 import stat
+import subprocess
+
+
+def verify_runtime_paths(root, private):
+    """Every staged ELF that needs the private OpenSSL must find it at its final prefix, never a build path."""
+    library = private + "/lib64"
+    for current, _, files in os.walk(root):
+        for name in files:
+            target = os.path.join(current, name)
+            if os.path.islink(target) or not os.path.isfile(target):
+                continue
+            with open(target, "rb") as stream:
+                if stream.read(4) != b"\x7fELF":
+                    continue
+            dynamic = subprocess.Popen(["readelf", "-d", target], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+            output = dynamic.communicate()[0].decode("utf-8", "replace")
+            paths = []
+            for line in output.splitlines():
+                if "(RPATH)" in line or "(RUNPATH)" in line:
+                    paths.extend(line.split("[", 1)[1].rsplit("]", 1)[0].split(":"))
+            relative = target[len(root):]
+            if any(path.startswith(("/builddir", "/tmp", "/var/tmp")) or "openssl-stage" in path for path in paths):
+                raise ValueError("Build-only runtime path remains in " + relative + ": " + ":".join(paths))
+            needs = re.search(r"Shared library: \[lib(?:ssl|crypto)\.so\.3\]", output) is not None
+            if needs and library not in paths and not relative.startswith(private + "/"):
+                raise ValueError("Missing private OpenSSL runtime path in " + relative)
+            if needs and relative.startswith(private + "/") and library not in paths and "libssl.so" in relative:
+                raise ValueError("Private libssl lacks its own runtime path")
 
 
 def stage(root, specification):
@@ -47,6 +76,7 @@ def stage(root, specification):
                     os.rmdir(target)
                 else:
                     os.chmod(target, 0o755)
+    verify_runtime_paths(root, private)
 
 
 if __name__ == "__main__":

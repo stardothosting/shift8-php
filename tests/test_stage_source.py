@@ -44,3 +44,44 @@ class StageSourceTests(TemporaryTest):
         (root / "php").symlink_to("/etc/passwd")
         with self.assertRaisesRegex(ValueError, "escapes"):
             stage_source.stage(str(root), str(plan))
+
+
+class RuntimePathTests(TemporaryTest):
+    PRIVATE = "/opt/shift8-php/deps/openssl-3.5.9"
+
+    def elf(self, relative="usr/bin/php"):
+        root = self.directory / "root"
+        path = root / relative
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(b"\x7fELF" + b"\0" * 12)
+        return root
+
+    def readelf(self, output):
+        from unittest import mock
+        process = mock.Mock()
+        process.communicate.return_value = (output.encode(), b"")
+        return mock.patch.object(stage_source.subprocess, "Popen", return_value=process)
+
+    NEEDS = " 0x1 (NEEDED) Shared library: [libssl.so.3]\n"
+
+    def test_build_only_runtime_path_is_rejected(self):
+        root = self.elf()
+        stale = self.NEEDS + " 0xf (RPATH) Library rpath: [/builddir/build/BUILD/openssl-stage" + self.PRIVATE + "/lib64]\n"
+        with self.readelf(stale), self.assertRaisesRegex(ValueError, "Build-only"):
+            stage_source.verify_runtime_paths(str(root), self.PRIVATE)
+
+    def test_private_openssl_without_runtime_path_is_rejected(self):
+        root = self.elf()
+        with self.readelf(self.NEEDS), self.assertRaisesRegex(ValueError, "Missing private OpenSSL"):
+            stage_source.verify_runtime_paths(str(root), self.PRIVATE)
+
+    def test_final_private_runtime_path_is_accepted(self):
+        root = self.elf()
+        good = self.NEEDS + " 0xf (RPATH) Library rpath: [" + self.PRIVATE + "/lib64]\n"
+        with self.readelf(good):
+            stage_source.verify_runtime_paths(str(root), self.PRIVATE)
+
+    def test_private_libssl_needs_its_own_runtime_path(self):
+        root = self.elf("opt/shift8-php/deps/openssl-3.5.9/lib64/libssl.so.3")
+        with self.readelf(self.NEEDS), self.assertRaisesRegex(ValueError, "Private libssl"):
+            stage_source.verify_runtime_paths(str(root), self.PRIVATE)
