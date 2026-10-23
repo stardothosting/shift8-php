@@ -313,6 +313,8 @@ def generate(manifest_path, environment_path, destination):
         " -n -r '" + COMPILED_PATHS_PHP + "' > %{_builddir}/compiled-paths.actual",
         "printf '%%s\\n' " + " ".join("'" + key + "=" + safe(value) + "'" for key, value in sorted(
             plan["layout"]["paths"]["compiled"].items())) + " > %{_builddir}/compiled-paths.expected",
+        "LC_ALL=C sort -o %{_builddir}/compiled-paths.actual %{_builddir}/compiled-paths.actual",
+        "LC_ALL=C sort -o %{_builddir}/compiled-paths.expected %{_builddir}/compiled-paths.expected",
         "diff %{_builddir}/compiled-paths.expected %{_builddir}/compiled-paths.actual",
         "",
         "%check", "export LC_CTYPE=${LC_CTYPE:?Measured UTF-8 locale required}",
