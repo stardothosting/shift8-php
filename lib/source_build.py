@@ -275,7 +275,7 @@ def generate(manifest_path, environment_path, destination):
         # apxs -a edits an httpd.conf under INSTALL_ROOT; give it a throwaway one (the stage step discards it).
         lines.extend([
             'conf="$(/usr/bin/apxs -q SYSCONFDIR)"', 'mkdir -p "%{buildroot}$conf"',
-            'touch "%{buildroot}$conf/httpd.conf"',
+            "echo 'LoadModule placeholder_module modules/mod_placeholder.so' > \"%{buildroot}$conf/httpd.conf\"",
         ])
     lines.append("make install INSTALL_ROOT=%{buildroot}")
     if plan.get("apache_module"):
